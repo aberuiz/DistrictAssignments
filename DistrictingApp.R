@@ -12,9 +12,11 @@ library(gdalraster)
 options(shiny.maxRequestSize = 20 * 1024^2)
 
 # AssignDistricts function
-  # Modified for Shiny App
-AssignDistricts <- function(memberList, districts, extraDistricts = NULL, removeGEO = TRUE){
-  memberList <- read.csv(memberList)
+# Modified for Shiny App
+AssignDistricts <- function(memberList, StreetCol, CityCol, districts, extraDistricts = NULL, removeGEO = TRUE){
+  # Use the selected columns for Street.Address and City
+  memberList$Street.Address <- memberList[[StreetCol]]
+  memberList$City <- memberList[[CityCol]]
   
   # Remove rows with NA or blank in Street.Address or City column
   memberList <- memberList[!is.na(memberList$Street.Address) & 
@@ -107,32 +109,56 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       fileInput("memberList", "Upload Member List (CSV)", accept = ".csv"),
+      uiOutput("columnSelection"),
       fileInput("districts", "Upload Districts ZIP (Must Contain SHP or GeoJSON)", 
                 accept = ".zip"),
       fileInput("extraDistricts", "Upload Extra Districts ZIP (Optional, Must contain SHP or GeoJSON)", 
                 accept = ".zip"),
       checkboxInput("removeGEO", "Remove Geometry Column", value = TRUE),
       actionButton("run", "Assign Districts"),
-      uiOutput("columnSelection"),
       textOutput("downloadInstructions"),
       downloadButton("downloadData", "Download Selected Columns")
     ),
     mainPanel(
       DTOutput("results")
-    ),
+    )
   ),
   theme = bs_theme(version = 5, bootswatch = "minty")
 )
 
 server <- function(input, output, session) {
   
+  csvData <- reactiveVal(NULL)
   results <- reactiveVal(NULL)
   
+  observeEvent(input$memberList, {
+    req(input$memberList)
+    csvData(read.csv(input$memberList$datapath))
+  })
+  
+  output$columnSelection <- renderUI({
+    req(csvData())
+    columns <- colnames(csvData())
+    
+    # Set default selections
+    default_street <- if("Street.Address" %in% columns) "Street.Address" else columns[1]
+    default_city <- if("City" %in% columns) "City" else columns[1]
+    
+    tagList(
+      selectInput("streetColumn", "Select Street Address Column", 
+                  choices = columns, 
+                  selected = default_street),
+      selectInput("cityColumn", "Select City Column", 
+                  choices = columns, 
+                  selected = default_city)
+    )
+  })
+  
   observeEvent(input$run, {
-    req(input$memberList, input$districts)
+    req(input$memberList, input$districts, input$streetColumn, input$cityColumn)
     
     tryCatch({
-      memberList <- input$memberList$datapath
+      memberList <- csvData()
       
       districts <- tryCatch({
         unzip_and_read_spatial(input$districts$datapath)
@@ -150,11 +176,12 @@ server <- function(input, output, session) {
       } else NULL
       
       result <- tryCatch({
-        AssignDistricts(memberList, districts, extraDistricts, input$removeGEO)
+        AssignDistricts(memberList, districts, extraDistricts, input$removeGEO, 
+                        StreetCol = input$streetColumn, CityCol = input$cityColumn)
       }, error = function(e) {
         print(paste("Error in AssignDistricts:", e$message))
         print("memberList structure:")
-        print(str(read.csv(memberList)))
+        print(str(memberList))
         print("districts structure:")
         print(str(districts))
         if (!is.null(extraDistricts)) {
@@ -187,18 +214,6 @@ server <- function(input, output, session) {
       datatable(result_data, options = list(scrollX = TRUE, pageLength = 5))
     } else {
       datatable(data.frame(Message = "No valid results to display"))
-    }
-  })
-  
-  # Dynamic UI for column selection
-  output$columnSelection <- renderUI({
-    req(results())
-    result_data <- results()
-    
-    if (is.data.frame(result_data) && ncol(result_data) > 0) {
-      checkboxGroupInput("selectedColumns", "Select columns to export:",
-                         choices = colnames(result_data),
-                         selected = NULL)  # Changed from colnames(result_data) to NULL
     }
   })
   

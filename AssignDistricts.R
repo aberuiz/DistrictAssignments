@@ -4,10 +4,14 @@ library(arcgisgeocode)
 library(yyjsonr)
 library(dplyr)
 
-AssignDistricts <- function(memberList, districts, extraDistricts = NULL, removeGEO = TRUE){
+AssignDistricts <- function(memberList, StreetCol="Street.Address", CityCol="City", districts, extraDistricts = NULL, removeGEO = TRUE){
   # Member List Path
   memberList <- read.csv(memberList)
-  
+
+  # Use the selected columns for Street.Address and City
+  memberList$Street.Address <- memberList[[StreetCol]]
+  memberList$City <- memberList[[CityCol]]
+    
   # Remove rows with NA or blank in Street.Address column
   memberList <- memberList[!is.na(memberList$Street.Address) & memberList$Street.Address != "", ]
 
