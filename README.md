@@ -9,6 +9,8 @@ You can assign addresses up to two districts.
 
 The shiny app can be started locally in R with: `shiny::runApp("DistrictingApp.R")`
 
+https://github.com/aberuiz/DistrictAssignments/assets/App_2.png
+
 1.  Upload a .csv file with the locations you would like to attach district information
 
 2.  Select Address and City Columns. By default the app will look for columns named 'Street.Address' & 'City'. If not found, a user can select the Address and City columns to be used for geocoding.
