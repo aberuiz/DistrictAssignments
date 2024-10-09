@@ -117,6 +117,7 @@ ui <- fluidPage(
       checkboxInput("removeGEO", "Remove Geometry Column", value = TRUE),
       actionButton("run", "Assign Districts"),
       textOutput("downloadInstructions"),
+      uiOutput("columnSelectionForDownload"),
       downloadButton("downloadData", "Download Selected Columns")
     ),
     mainPanel(
@@ -217,6 +218,22 @@ server <- function(input, output, session) {
     }
   })
   
+  availableColumns <- reactiveVal(NULL)
+  
+  observeEvent(results(), {
+    req(results())
+    availableColumns(colnames(results()))
+  })
+  
+  # Render UI for column selection
+  output$columnSelectionForDownload <- renderUI({
+    req(availableColumns())
+    checkboxGroupInput("selectedColumns", "Select columns to download:",
+                       choices = availableColumns(),
+                       selected = NULL)
+  })
+  
+  # Update download instructions
   output$downloadInstructions <- renderText({
     if (is.null(input$selectedColumns) || length(input$selectedColumns) == 0) {
       "Please select at least one column to download."
@@ -225,16 +242,18 @@ server <- function(input, output, session) {
     }
   })
   
+  # Modify download handler
   output$downloadData <- downloadHandler(
     filename = function() {
       paste("assigned_districts_", Sys.Date(), ".csv", sep = "")
     },
     content = function(file) {
+      req(results(), input$selectedColumns)
       data_to_write <- results()
       
       # Filter columns based on user selection
       selected_cols <- input$selectedColumns
-      if (!is.null(selected_cols) && length(selected_cols) > 0) {
+      if (length(selected_cols) > 0) {
         data_to_write <- data_to_write[, selected_cols, drop = FALSE]
         write.csv(data_to_write, file, row.names = FALSE)
       } else {
