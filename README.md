@@ -35,15 +35,15 @@ You can also run a modified version directly in R with the function `AssignDistr
 
 ### Limitations
 
-Currently there are a few known limitations:
+There are a few known limitations:
 
--   District geometry's must be in a .shp or .geojson format
+-   District geometry must be in a .shp or .geojson format
 
--   The shiny app version can only take geometry files in a .zip
+-   The shiny app version can only accept geometry files in a .zip
 
 
 ### Notes
 
--   Geocoding is done with the `arcgisgeocoder`. Street Addresses and City is sent, all other information is processed locally.
+-   Geocoding is done with the R package, `arcgisgeocoder`. Street Addresses and City is sent, all other information is processed locally.
 
--   To improve geocoding, the bounding box is set using the first uploaded district geometry
+-   To improve geocoding results, the bounding box is set using the first uploaded district geometry
