@@ -9,7 +9,7 @@ You can assign addresses up to two districts.
 
 The shiny app can be started locally in R with: `shiny::runApp("DistrictingApp.R")`
 
-https://github.com/aberuiz/DistrictAssignments/assets/App_2.png
+https://github.com/aberuiz/DistrictAssignments/blob/main/assets/App_2.png
 
 1.  Upload a .csv file with the locations you would like to attach district information
 
