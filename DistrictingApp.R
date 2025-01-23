@@ -26,6 +26,9 @@ AssignDistricts <- function(memberList, StreetCol, CityCol, districts, extraDist
   
   print(paste("Number of valid addresses:", nrow(memberList)))
   
+  # Ensure districts has valid geometry
+  districts <- sf::st_make_valid(districts)
+  
   boundaries <- sf::st_bbox(districts)
   
   memberGeos <- arcgisgeocode::find_address_candidates(
@@ -95,7 +98,16 @@ unzip_and_read_spatial <- function(zipfile) {
     old_config <- gdalraster::get_config_option("SHAPE_RESTORE_SHX")
     gdalraster::set_config_option("SHAPE_RESTORE_SHX", "YES")
     on.exit(gdalraster::set_config_option("SHAPE_RESTORE_SHX", old_config))
-    return(sf::read_sf(shp_files[1]))
+    
+    # Read in shapefile for new validation procedure
+    districts <- sf::read_sf(shp_files[1])
+    # Make valid and remove any potential geometry problems
+    districts <- sf::st_make_valid(districts)
+    # Additional cleanup if needed
+    districts <- sf::st_buffer(districts, 0)
+    
+    return(districts)
+    # return(sf::read_sf(shp_files[1])) # Was the old code
   } else if (length(geojson_files) > 0) {
     return(yyjsonr::read_geojson_file(geojson_files[1]))
   } else {
