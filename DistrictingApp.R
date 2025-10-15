@@ -12,74 +12,115 @@ library(gdalraster)
 options(shiny.maxRequestSize = 20 * 1024^2)
 
 # AssignDistricts function
-# Modified for Shiny App
-AssignDistricts <- function(memberList, StreetCol, CityCol, districts, extraDistricts = NULL, removeGEO = TRUE){
+# Modified for Shiny App - supports multiple district layers
+AssignDistricts <- function(memberList, StreetCol, CityCol, districtsList, removeGEO = TRUE, progress = NULL){
   # Use the selected columns for Street.Address and City
   memberList$Street.Address <- memberList[[StreetCol]]
   memberList$City <- memberList[[CityCol]]
-  
+
+  # Store original row count and identifiers
+  original_count <- nrow(memberList)
+  memberList$original_row_id <- seq_len(nrow(memberList))
+
   # Remove rows with NA or blank in Street.Address or City column
-  memberList <- memberList[!is.na(memberList$Street.Address) & 
-                             memberList$Street.Address != "" &
-                             !is.na(memberList$City) &
-                             memberList$City != "", ]
-  
+  valid_addresses <- !is.na(memberList$Street.Address) &
+                     memberList$Street.Address != "" &
+                     !is.na(memberList$City) &
+                     memberList$City != ""
+
+  invalid_rows <- memberList[!valid_addresses, ]
+  memberList <- memberList[valid_addresses, ]
+
   print(paste("Number of valid addresses:", nrow(memberList)))
-  
-  # Ensure districts has valid geometry
-  districts <- sf::st_make_valid(districts)
-  
-  boundaries <- sf::st_bbox(districts)
-  
+
+  # Ensure all districts have valid geometry and use the first one for boundaries
+  districtsList <- lapply(districtsList, sf::st_make_valid)
+
+  boundaries <- sf::st_bbox(districtsList[[1]])
+
+  # Update progress before geocoding
+  if (!is.null(progress)) {
+    progress$set(message = "Geocoding addresses...", value = 0.3)
+  }
+
   memberGeos <- arcgisgeocode::find_address_candidates(
     address = memberList$Street.Address,
     city = memberList$City,
     search_extent = boundaries,
     max_locations = 1
   )
-  
-  print(paste("Number of geocoded results:", nrow(memberGeos)))
-  
-  # Force binding columns if row counts match
-  if (nrow(memberList) == nrow(memberGeos)) {
-    combo_df <- data.frame(memberList, memberGeos)
-  } else {
-    warning("Number of geocoded results doesn't match input addresses. Attempting to join by address.")
-    combo_df <- dplyr::bind_cols(memberList, memberGeos)
+
+  # Update progress after geocoding
+  if (!is.null(progress)) {
+    progress$set(message = "Processing results...", value = 0.6)
   }
-  
+
+  print(paste("Number of geocoded results:", nrow(memberGeos)))
+
+  # Strict validation: row counts MUST match
+  if (nrow(memberList) != nrow(memberGeos)) {
+    stop(paste("Geocoding error: Expected", nrow(memberList),
+               "results but got", nrow(memberGeos),
+               "This indicates a problem with the geocoding service."))
+  }
+
+  combo_df <- data.frame(memberList, memberGeos)
+
+  # Identify rows with failed geocoding (NA coordinates)
+  failed_geocoding <- is.na(combo_df$x) | is.na(combo_df$y)
+  failed_rows <- combo_df[failed_geocoding, c("original_row_id", "Street.Address", "City")]
+
   # Remove rows with NA in x or y coordinates
-  combo_df <- combo_df[!is.na(combo_df$x) & !is.na(combo_df$y), ]
-  
+  combo_df <- combo_df[!failed_geocoding, ]
+
   print(paste("Number of valid geocoded addresses:", nrow(combo_df)))
-  
+
+  # Update progress before spatial joins
+  if (!is.null(progress)) {
+    progress$set(message = "Performing spatial joins...", value = 0.8)
+  }
+
   member_pts <- combo_df |>
     sf::st_as_sf(
       coords = c("x","y"),
       crs = sf::st_crs("EPSG:4326"),
       na.fail = FALSE
     ) |>
-    sf::st_transform(crs = sf::st_crs(districts))
-  
-  final <- sf::st_join(member_pts, districts, join = sf::st_within)
-  
-  if (is.null(extraDistricts)) {
-    if (isTRUE(removeGEO)) {
-      return(sf::st_drop_geometry(final))
-    } else {
-      return(final)
-    }
-  } else {
-    extraDistricts <- extraDistricts |>
-      sf::st_transform(crs = sf::st_crs(districts))
-    extra_final <- sf::st_join(final, extraDistricts, join = sf::st_within)
-    
-    if (isTRUE(removeGEO)) {
-      return(sf::st_drop_geometry(extra_final))
-    } else {
-      return(extra_final)
+    sf::st_transform(crs = sf::st_crs(districtsList[[1]]))
+
+  # Join with the first district layer
+  final <- sf::st_join(member_pts, districtsList[[1]], join = sf::st_within)
+
+  # Join with additional district layers if they exist
+  if (length(districtsList) > 1) {
+    for (i in 2:length(districtsList)) {
+      # Transform to match CRS
+      districtsList[[i]] <- districtsList[[i]] |>
+        sf::st_transform(crs = sf::st_crs(districtsList[[1]]))
+
+      # Spatial join
+      final <- sf::st_join(final, districtsList[[i]], join = sf::st_within)
     }
   }
+
+  # Store statistics as attributes
+  result <- if (isTRUE(removeGEO)) {
+    sf::st_drop_geometry(final)
+  } else {
+    final
+  }
+
+  # Attach summary statistics
+  attr(result, "summary_stats") <- list(
+    original_count = original_count,
+    invalid_address_count = nrow(invalid_rows),
+    invalid_rows = if(nrow(invalid_rows) > 0) invalid_rows else NULL,
+    failed_geocoding_count = nrow(failed_rows),
+    failed_geocoding_rows = if(nrow(failed_rows) > 0) failed_rows else NULL,
+    successful_count = nrow(result)
+  )
+
+  return(result)
 }
 
 # Function to unzip and read spatial file
@@ -98,18 +139,22 @@ unzip_and_read_spatial <- function(zipfile) {
     old_config <- gdalraster::get_config_option("SHAPE_RESTORE_SHX")
     gdalraster::set_config_option("SHAPE_RESTORE_SHX", "YES")
     on.exit(gdalraster::set_config_option("SHAPE_RESTORE_SHX", old_config))
-    
+
     # Read in shapefile for new validation procedure
     districts <- sf::read_sf(shp_files[1])
     # Make valid and remove any potential geometry problems
     districts <- sf::st_make_valid(districts)
     # Additional cleanup if needed
     districts <- sf::st_buffer(districts, 0)
-    
+
     return(districts)
-    # return(sf::read_sf(shp_files[1])) # Was the old code
   } else if (length(geojson_files) > 0) {
-    return(yyjsonr::read_geojson_file(geojson_files[1]))
+    # Read GeoJSON and apply same validation as shapefiles
+    districts <- yyjsonr::read_geojson_file(geojson_files[1])
+    districts <- sf::st_make_valid(districts)
+    districts <- sf::st_buffer(districts, 0)
+
+    return(districts)
   } else {
     stop("No .shp or .geojson file found in the zip archive")
   }
@@ -122,10 +167,10 @@ ui <- fluidPage(
     sidebarPanel(
       fileInput("memberList", "Upload Member List (CSV)", accept = ".csv"),
       uiOutput("columnSelection"),
-      fileInput("districts", "Upload Districts ZIP (Must Contain SHP or GeoJSON)", 
-                accept = ".zip"),
-      fileInput("extraDistricts", "Upload Extra Districts ZIP (Optional, Must contain SHP or GeoJSON)", 
-                accept = ".zip"),
+      fileInput("districts", "Upload District Files (Must Contain SHP or GeoJSON)",
+                accept = ".zip",
+                multiple = TRUE),
+      helpText("Upload one or more district ZIP files. At least one is required."),
       checkboxInput("removeGEO", "Remove Geometry Column", value = TRUE),
       actionButton("run", "Assign Districts"),
       textOutput("downloadInstructions"),
@@ -169,44 +214,82 @@ server <- function(input, output, session) {
   
   observeEvent(input$run, {
     req(input$memberList, input$districts, input$streetColumn, input$cityColumn)
-    
+
     tryCatch({
       memberList <- csvData()
-      
-      districts <- tryCatch({
-        unzip_and_read_spatial(input$districts$datapath)
-      }, error = function(e) {
-        stop(paste("Error reading districts file:", e$message))
-      })
-      
-      extraDistricts <- if (!is.null(input$extraDistricts)) {
-        tryCatch({
-          unzip_and_read_spatial(input$extraDistricts$datapath)
+
+      # Check that at least one district file was uploaded
+      if (is.null(input$districts) || nrow(input$districts) == 0) {
+        stop("At least one district file is required")
+      }
+
+      # Create a progress indicator
+      progress <- Progress$new()
+      on.exit(progress$close())
+      progress$set(message = "Loading district files...", value = 0.1)
+
+      # Read all district files into a list
+      districtsList <- list()
+      for (i in 1:nrow(input$districts)) {
+        districtsList[[i]] <- tryCatch({
+          unzip_and_read_spatial(input$districts$datapath[i])
         }, error = function(e) {
-          warning(paste("Error reading extra districts file:", e$message))
-          NULL
+          stop(paste("Error reading district file", i, ":", e$message))
         })
-      } else NULL
-      
+      }
+
+      print(paste("Number of district files loaded:", length(districtsList)))
+
+      progress$set(message = "Starting address assignment...", value = 0.2)
+
       result <- tryCatch({
-        AssignDistricts(memberList, districts, extraDistricts, input$removeGEO, 
-                        StreetCol = input$streetColumn, CityCol = input$cityColumn)
+        AssignDistricts(memberList,
+                        StreetCol = input$streetColumn,
+                        CityCol = input$cityColumn,
+                        districtsList = districtsList,
+                        removeGEO = input$removeGEO,
+                        progress = progress)
       }, error = function(e) {
         print(paste("Error in AssignDistricts:", e$message))
         print("memberList structure:")
         print(str(memberList))
-        print("districts structure:")
-        print(str(districts))
-        if (!is.null(extraDistricts)) {
-          print("extraDistricts structure:")
-          print(str(extraDistricts))
-        }
+        print("districtsList structure:")
+        print(str(districtsList))
         stop(e)
       })
-      
+
+      progress$set(message = "Complete!", value = 1)
+
       results(result)
+
+      # Extract and display summary statistics
+      stats <- attr(result, "summary_stats")
+      if (!is.null(stats)) {
+        # Build summary message
+        summary_msg <- sprintf(
+          "Processing complete!\n\nTotal addresses: %d\nInvalid addresses (blank/NA): %d\nFailed geocoding: %d\nSuccessfully assigned: %d",
+          stats$original_count,
+          stats$invalid_address_count,
+          stats$failed_geocoding_count,
+          stats$successful_count
+        )
+
+        # Add details about failed rows if any
+        if (stats$failed_geocoding_count > 0 && !is.null(stats$failed_geocoding_rows)) {
+          failed_details <- paste(
+            sprintf("Row %d: %s, %s",
+                    stats$failed_geocoding_rows$original_row_id,
+                    stats$failed_geocoding_rows$Street.Address,
+                    stats$failed_geocoding_rows$City),
+            collapse = "\n"
+          )
+          summary_msg <- paste(summary_msg, "\n\nFailed addresses:\n", failed_details, sep = "")
+        }
+
+        showNotification(summary_msg, type = "message", duration = NULL)
+      }
     }, error = function(e) {
-      showNotification(paste("Error:", e$message), type = "error")
+      showNotification(paste("Error:", e$message), type = "error", duration = NULL)
       # Log the full error for debugging
       print(paste("Full error:", e))
     })
