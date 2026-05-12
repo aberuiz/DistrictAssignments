@@ -1,4 +1,11 @@
-#install.packages(c("shiny","DT","bslib","sf","arcgisgeocode","yyjsonr","dplyr","gdalraster"))
+# install pak if missing
+if (!requireNamespace("pak", quietly = TRUE)) {
+  install.packages("pak", repos = "https://cloud.r-project.org")
+}
+
+# Install any missing packages needed
+pak::pak(c("shiny", "DT", "bslib", "sf", "arcgisgeocode", "yyjsonr", "dplyr", "gdalraster"))
+
 library(shiny)
 library(DT)
 library(bslib)
