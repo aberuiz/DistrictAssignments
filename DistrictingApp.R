@@ -130,15 +130,27 @@ AssignDistricts <- function(memberList, StreetCol, CityCol, districtsList, remov
   return(result)
 }
 
-# Function to unzip and read spatial file
+# Unzip a single uploaded district archive and read the spatial layer it contains.
+#
+# IMPORTANT: each call extracts into its OWN unique directory (via tempfile()).
+# Previously this used the shared session tempdir() for every call, so when a
+# user uploaded multiple district zips they were all extracted side-by-side into
+# the same folder. The subsequent recursive list.files(...)[1] then matched the
+# FIRST .shp/.geojson from *any* archive, causing every uploaded file to resolve
+# to the same layer. Isolating each archive in its own directory guarantees the
+# glob only sees the file(s) from the archive currently being read.
+#
+# Returns: an sf object with validated, repaired geometry.
 unzip_and_read_spatial <- function(zipfile) {
-  temp_dir <- tempdir()
+  # Unique, per-archive extraction directory (prevents cross-archive contamination)
+  temp_dir <- tempfile("district_")
+  dir.create(temp_dir)
   utils::unzip(zipfile, exdir = temp_dir)
-  
-  # Search for .shp files recursively
+
+  # Search this archive's directory only for a supported spatial file
   shp_files <- list.files(temp_dir, pattern = "\\.shp$", full.names = TRUE, recursive = TRUE)
   geojson_files <- list.files(temp_dir, pattern = "\\.geojson$", full.names = TRUE, recursive = TRUE)
-  
+
   if (length(shp_files) > 0) {
     # If multiple .shp files are found, use the first one
     sf::sf_use_s2(FALSE)
