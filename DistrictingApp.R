@@ -18,276 +18,11 @@ library(gdalraster)
 # Increase the maximum file upload size to 20MB
 options(shiny.maxRequestSize = 20 * 1024^2)
 
-# ---------------------------------------------------------------------------
-# District layer naming helpers (kept in sync with AssignDistricts.R)
-# ---------------------------------------------------------------------------
-
-# Turn an arbitrary label into a safe column-name prefix: non-alphanumeric runs
-# collapse to a single underscore, and leading/trailing underscores are trimmed.
-# e.g. "State Senate (2020)" -> "State_Senate_2020"
-sanitize_layer_name <- function(name) {
-  name <- gsub("[^A-Za-z0-9]+", "_", name)
-  gsub("^_+|_+$", "", name)
-}
-
-# Prefix a district layer's attribute (non-geometry) columns with its layer name
-# so columns from multiple layers stay distinct and self-describing. A "DISTRICT"
-# column in the "Congressional" layer becomes "Congressional_DISTRICT". The
-# geometry column is left untouched. An empty/blank name is a no-op.
-prefix_layer_columns <- function(layer, layer_name) {
-  layer_name <- sanitize_layer_name(layer_name)
-  if (nchar(layer_name) == 0) return(layer)
-
-  geom_col <- attr(layer, "sf_column")
-  data_cols <- setdiff(names(layer), geom_col)
-  if (length(data_cols) > 0) {
-    idx <- match(data_cols, names(layer))
-    names(layer)[idx] <- paste0(layer_name, "_", data_cols)
-  }
-  layer
-}
-
-# Determine a display name for each district layer, used to prefix its columns.
-# In the Shiny app the layers arrive already-read (as sf objects), so names come
-# from districtNames (supplied from the per-file UI text inputs); when absent a
-# positional fallback of "District_1", "District_2", ... is used.
-resolve_layer_names <- function(districtsList, districtNames = NULL) {
-  list_names <- names(districtsList)
-  vapply(seq_along(districtsList), function(i) {
-    if (!is.null(districtNames) && length(districtNames) >= i && nzchar(districtNames[i])) {
-      return(districtNames[i])
-    }
-    if (!is.null(list_names) && nzchar(list_names[i])) {
-      return(list_names[i])
-    }
-    paste0("District_", i)
-  }, character(1))
-}
-
-# AssignDistricts() -- Shiny variant
-# Geocodes a member list and assigns each address to the district(s) it falls
-# within, across one or more district layers, reporting progress to the UI.
-#
-# Arguments:
-#   memberList    - data.frame of addresses (already loaded from the CSV upload).
-#   StreetCol     - name of the street-address column in memberList.
-#   CityCol       - name of the city column in memberList.
-#   districtsList - list of already-read district sf layers.
-#   removeGEO     - if TRUE (default) the geometry column is dropped from output.
-#   progress      - optional shiny Progress object for UI status updates.
-#   districtNames - optional character vector, one name per district layer, used
-#                   to prefix each layer's columns so they stay distinguishable.
-AssignDistricts <- function(memberList, StreetCol, CityCol, districtsList, removeGEO = TRUE, progress = NULL, districtNames = NULL){
-  # Use the selected columns for Street.Address and City
-  memberList$Street.Address <- memberList[[StreetCol]]
-  memberList$City <- memberList[[CityCol]]
-
-  # Store original row count and give every row a stable identifier. Nothing is
-  # ever dropped from here on: rows that can't be geocoded or assigned are FLAGGED
-  # via the `geocode_status` column and carried through to the output, so a few
-  # bad rows never derail the whole run.
-  original_count <- nrow(memberList)
-  memberList$original_row_id <- seq_len(nrow(memberList))
-
-  # Flag rows whose street address or city is blank/NA. These can't be geocoded,
-  # but they stay in the table with a status of "Missing address".
-  valid_addresses <- !is.na(memberList$Street.Address) &
-                     memberList$Street.Address != "" &
-                     !is.na(memberList$City) &
-                     memberList$City != ""
-
-  memberList$geocode_status <- ifelse(valid_addresses, "OK", "Missing address")
-
-  print(paste("Number of geocodable addresses:", sum(valid_addresses)))
-
-  # Ensure all districts have valid geometry and use the first one for boundaries
-  districtsList <- lapply(districtsList, sf::st_make_valid)
-
-  # Prefix each layer's attribute columns with its resolved name so columns from
-  # different layers stay distinct in the joined output (see #4).
-  layer_names <- resolve_layer_names(districtsList, districtNames)
-  districtsList <- Map(prefix_layer_columns, districtsList, layer_names)
-
-  boundaries <- sf::st_bbox(districtsList[[1]])
-
-  # Update progress before geocoding
-  if (!is.null(progress)) {
-    progress$set(message = "Geocoding addresses...", value = 0.3)
-  }
-
-  # --- Geocoding -----------------------------------------------------------
-  # Geocode only the rows that have a usable address. arcgisgeocode returns a
-  # `result_id` column that is a 1-based index back into the vector of addresses
-  # we sent. We use it to place each result onto the exact source row instead of
-  # binding by position. This matters because the service can return FEWER rows
-  # than we sent (an address may yield no candidate) -- a positional cbind would
-  # then silently misalign every following row. Keying on result_id keeps rows
-  # aligned and lets unmatched inputs simply stay NA, so we no longer need the
-  # old hard stop() on a row-count mismatch.
-  valid_idx <- which(valid_addresses)
-
-  if (length(valid_idx) > 0) {
-    memberGeos <- arcgisgeocode::find_address_candidates(
-      address = memberList$Street.Address[valid_idx],
-      city = memberList$City[valid_idx],
-      search_extent = boundaries,
-      max_locations = 1
-    )
-    print(paste("Number of geocoded results:", nrow(memberGeos)))
-
-    # Carry every geocode field back onto the full member list, keyed by
-    # result_id. Columns are pre-filled with NA so any row without a match
-    # (or without a usable address) stays NA rather than misaligning.
-    geo_df <- if (inherits(memberGeos, "sf")) sf::st_drop_geometry(memberGeos) else memberGeos
-
-    # result_id maps each returned candidate back to its input row (1-based). If a
-    # future package version omits it, fall back to positional alignment only when
-    # the counts match exactly -- otherwise stop rather than misalign silently.
-    if ("result_id" %in% names(geo_df)) {
-      result_ids <- geo_df$result_id
-    } else if (nrow(geo_df) == length(valid_idx)) {
-      result_ids <- seq_len(nrow(geo_df))
-    } else {
-      stop("Geocoder returned no 'result_id' and an unexpected row count; cannot align results safely.")
-    }
-
-    geo_cols <- setdiff(names(geo_df), "result_id")
-    target_rows <- valid_idx[result_ids]
-    for (col in geo_cols) {
-      if (is.null(memberList[[col]])) memberList[[col]] <- NA
-      memberList[[col]][target_rows] <- geo_df[[col]]
-    }
-  } else {
-    print("No geocodable addresses found.")
-  }
-
-  # Update progress after geocoding
-  if (!is.null(progress)) {
-    progress$set(message = "Processing results...", value = 0.6)
-  }
-
-  # Guarantee x/y coordinate columns exist even if geocoding produced none.
-  if (is.null(memberList$x)) memberList$x <- NA_real_
-  if (is.null(memberList$y)) memberList$y <- NA_real_
-
-  # Flag address-valid rows that still failed to geocode (no candidate returned).
-  failed_geo <- valid_addresses & (is.na(memberList$x) | is.na(memberList$y))
-  memberList$geocode_status[failed_geo] <- "No geocode match"
-
-  print(paste("Number of geocoded addresses:",
-              sum(!is.na(memberList$x) & !is.na(memberList$y))))
-
-  # Update progress before spatial joins
-  if (!is.null(progress)) {
-    progress$set(message = "Performing spatial joins...", value = 0.8)
-  }
-
-  # --- Spatial assignment --------------------------------------------------
-  # Turn EVERY row into a point. Rows with NA coordinates (missing address or no
-  # geocode match) become empty points via na.fail = FALSE; a left st_join then
-  # keeps them in the output with NA district columns. Nothing is dropped.
-  member_pts <- memberList |>
-    sf::st_as_sf(
-      coords = c("x","y"),
-      crs = sf::st_crs("EPSG:4326"),
-      na.fail = FALSE
-    ) |>
-    sf::st_transform(crs = sf::st_crs(districtsList[[1]]))
-
-  # Join with the first district layer
-  final <- sf::st_join(member_pts, districtsList[[1]], join = sf::st_within)
-
-  # Join with additional district layers if they exist
-  if (length(districtsList) > 1) {
-    for (i in 2:length(districtsList)) {
-      # Transform to match CRS
-      districtsList[[i]] <- districtsList[[i]] |>
-        sf::st_transform(crs = sf::st_crs(districtsList[[1]]))
-
-      # Spatial join
-      final <- sf::st_join(final, districtsList[[i]], join = sf::st_within)
-    }
-  }
-
-  # Drop geometry for a clean tabular/CSV result unless the caller wants it.
-  result <- if (isTRUE(removeGEO)) {
-    sf::st_drop_geometry(final)
-  } else {
-    final
-  }
-
-  # --- Summary -------------------------------------------------------------
-  # Counts come from the flag column on the (row-complete) member list, so they
-  # reflect input rows regardless of any join row-multiplication.
-  invalid_count <- sum(memberList$geocode_status == "Missing address")
-  failed_count  <- sum(memberList$geocode_status == "No geocode match")
-  success_count <- sum(memberList$geocode_status == "OK")
-
-  status_cols <- c("original_row_id", "Street.Address", "City", "geocode_status")
-  invalid_rows <- memberList[memberList$geocode_status == "Missing address", status_cols]
-  failed_rows  <- memberList[memberList$geocode_status == "No geocode match", status_cols]
-
-  # Attach summary statistics
-  attr(result, "summary_stats") <- list(
-    original_count = original_count,
-    invalid_address_count = invalid_count,
-    invalid_rows = if(invalid_count > 0) invalid_rows else NULL,
-    failed_geocoding_count = failed_count,
-    failed_geocoding_rows = if(failed_count > 0) failed_rows else NULL,
-    successful_count = success_count
-  )
-
-  return(result)
-}
-
-# Unzip a single uploaded district archive and read the spatial layer it contains.
-#
-# IMPORTANT: each call extracts into its OWN unique directory (via tempfile()).
-# Previously this used the shared session tempdir() for every call, so when a
-# user uploaded multiple district zips they were all extracted side-by-side into
-# the same folder. The subsequent recursive list.files(...)[1] then matched the
-# FIRST .shp/.geojson from *any* archive, causing every uploaded file to resolve
-# to the same layer. Isolating each archive in its own directory guarantees the
-# glob only sees the file(s) from the archive currently being read.
-#
-# Returns: an sf object with validated, repaired geometry.
-unzip_and_read_spatial <- function(zipfile) {
-  # Unique, per-archive extraction directory (prevents cross-archive contamination)
-  temp_dir <- tempfile("district_")
-  dir.create(temp_dir)
-  utils::unzip(zipfile, exdir = temp_dir)
-
-  # Search this archive's directory only for a supported spatial file
-  shp_files <- list.files(temp_dir, pattern = "\\.shp$", full.names = TRUE, recursive = TRUE)
-  geojson_files <- list.files(temp_dir, pattern = "\\.geojson$", full.names = TRUE, recursive = TRUE)
-
-  if (length(shp_files) > 0) {
-    # If multiple .shp files are found, use the first one
-    sf::sf_use_s2(FALSE)
-    # Set GDAL configuration option
-    old_config <- gdalraster::get_config_option("SHAPE_RESTORE_SHX")
-    gdalraster::set_config_option("SHAPE_RESTORE_SHX", "YES")
-    on.exit(gdalraster::set_config_option("SHAPE_RESTORE_SHX", old_config))
-
-    # Read in shapefile for new validation procedure
-    districts <- sf::read_sf(shp_files[1])
-    # Make valid and remove any potential geometry problems
-    districts <- sf::st_make_valid(districts)
-    # Additional cleanup if needed
-    districts <- sf::st_buffer(districts, 0)
-
-    return(districts)
-  } else if (length(geojson_files) > 0) {
-    # Read GeoJSON and apply same validation as shapefiles
-    districts <- yyjsonr::read_geojson_file(geojson_files[1])
-    districts <- sf::st_make_valid(districts)
-    districts <- sf::st_buffer(districts, 0)
-
-    return(districts)
-  } else {
-    stop("No .shp or .geojson file found in the zip archive")
-  }
-}
+# Shared core logic (read/prepare layers, geocode, assign). Keeping it in one
+# file means the app and the command-line script can't drift apart. Sourced
+# relative to the app, so run the app from the repository root
+# (e.g. shiny::runApp("DistrictingApp.R")).
+source("districting_core.R")
 
 # Shiny UI
 ui <- fluidPage(
@@ -296,13 +31,21 @@ ui <- fluidPage(
     sidebarPanel(
       fileInput("memberList", "Upload Member List (CSV)", accept = ".csv"),
       uiOutput("columnSelection"),
-      fileInput("districts", "Upload District Files (Must Contain SHP or GeoJSON)",
+      uiOutput("geocodeUI"),
+      textOutput("geocodeStatus"),
+      tags$hr(),
+      fileInput("districts", "District Files (ZIP containing SHP or GeoJSON)",
                 accept = ".zip",
-                multiple = TRUE),
-      helpText("Upload one or more district ZIP files. At least one is required."),
+                multiple = TRUE,
+                buttonLabel = "Add File(s)..."),
+      helpText("You can keep adding district files. At least one is required."),
       uiOutput("districtNaming"),
+      uiOutput("clearDistrictsUI"),
       checkboxInput("removeGEO", "Remove Geometry Column", value = TRUE),
+      checkboxInput("restrictGeo", "Restrict geocoding to district area", value = FALSE),
       actionButton("run", "Assign Districts"),
+      actionButton("regeocode", "Clear geocode cache"),
+      helpText("Clear the cache to force a fresh geocode."),
       textOutput("downloadInstructions"),
       uiOutput("columnSelectionForDownload"),
       downloadButton("downloadData", "Download Selected Columns")
@@ -318,10 +61,163 @@ server <- function(input, output, session) {
   
   csvData <- reactiveVal(NULL)
   results <- reactiveVal(NULL)
-  
+
+  # Accumulated district files. A single fileInput only keeps the most recent
+  # selection, so we copy each upload to a stable per-session directory and
+  # append it here. This lets the user add district files incrementally (upload
+  # some, then add more) rather than picking them all in one dialog.
+  # Holds a data.frame with columns: name, datapath.
+  districtFiles <- reactiveVal(NULL)
+
+  # Geocode cache: geocoding is the slow, rate-limited step, so we run it once
+  # per unique set of address/city values and reuse the points when only the
+  # district files change. This is what lets you geocode once and then apply many
+  # districting files. `geocodeKey` holds the address/city data the cache was
+  # built from; when it changes, we re-geocode.
+  geocodedData <- reactiveVal(NULL)
+  geocodeKey <- reactiveVal(NULL)
+
+  # Append each new upload to the accumulated list, copying to a persistent
+  # directory so later uploads can't invalidate earlier temp files.
+  observeEvent(input$districts, {
+    req(input$districts)
+    persist_dir <- file.path(tempdir(), "district_uploads")
+    if (!dir.exists(persist_dir)) dir.create(persist_dir)
+
+    stored <- vapply(seq_len(nrow(input$districts)), function(i) {
+      dest <- tempfile("district_", tmpdir = persist_dir, fileext = ".zip")
+      file.copy(input$districts$datapath[i], dest)
+      dest
+    }, character(1))
+
+    new_files <- data.frame(
+      name = input$districts$name,
+      datapath = stored,
+      stringsAsFactors = FALSE
+    )
+    districtFiles(rbind(districtFiles(), new_files))
+  })
+
+  # Clear the accumulated district files.
+  observeEvent(input$clearDistricts, {
+    districtFiles(NULL)
+    showNotification("Cleared district files.", type = "message", duration = 3)
+  })
+
+  # Show a "Clear district files" button only once files have been added.
+  output$clearDistrictsUI <- renderUI({
+    req(districtFiles())
+    actionButton("clearDistricts", "Clear district files")
+  })
+
+  # Read + validate + name-prefix all accumulated district layers. Called from
+  # both the geocode (when restricting) and assign handlers, so the reading and
+  # naming logic lives in one place.
+  read_prepared_layers <- function() {
+    files <- districtFiles()
+    if (is.null(files) || nrow(files) == 0) {
+      stop("At least one district file is required")
+    }
+    districtsList <- lapply(seq_len(nrow(files)), function(i) {
+      tryCatch(
+        unzip_and_read_spatial(files$datapath[i]),
+        error = function(e) stop(paste("Error reading district file", i, ":", e$message))
+      )
+    })
+    districtNames <- vapply(seq_len(nrow(files)), function(i) {
+      nm <- input[[paste0("districtName_", i)]]
+      if (is.null(nm) || !nzchar(nm)) tools::file_path_sans_ext(files$name[i]) else nm
+    }, character(1))
+    prepare_district_layers(districtsList, districtNames)
+  }
+
+  # A stable, comparable signature for the search extent. Two freshly-computed
+  # bboxes for the same area can differ in attributes or floating-point detail,
+  # which would otherwise bust the cache; rounding the plain coordinates makes
+  # the comparison robust. NULL (unrestricted) compares equal to NULL.
+  bbox_signature <- function(b) if (is.null(b)) NULL else round(as.numeric(b), 6)
+
+  # Return the cached geocode if it still matches the current inputs, otherwise
+  # geocode and cache. Centralizes the "geocode once, reuse" logic so both the
+  # standalone Geocode button and the Assign button share it -- which is what lets
+  # Assign accept the geocoding the Geocode button already did. The cache key is
+  # the address/city values plus the (normalized) search extent.
+  ensure_geocoded <- function(memberList, streetCol, cityCol, boundaries, progress = NULL) {
+    key <- list(
+      street = memberList[[streetCol]],
+      city   = memberList[[cityCol]],
+      bbox   = bbox_signature(boundaries)
+    )
+    if (!is.null(geocodedData()) && identical(key, geocodeKey())) {
+      showNotification("Reusing existing geocoding.", type = "message", duration = 2)
+      return(geocodedData())
+    }
+    if (!is.null(progress)) progress$set(message = "Geocoding addresses...", value = 0.3)
+    geocoded <- GeocodeMembers(memberList, streetCol, cityCol, boundaries = boundaries)
+    geocodedData(geocoded)
+    geocodeKey(key)
+    geocoded
+  }
+
+  # Geocode button appears once a CSV and its address/city columns are chosen.
+  # Geocoding is independent of the district files (unless "restrict" is on), so
+  # the user can start this slow step early while still gathering district files.
+  output$geocodeUI <- renderUI({
+    req(csvData(), input$streetColumn, input$cityColumn)
+    actionButton("geocode", "Geocode Addresses")
+  })
+
+  # Geocode on demand, independent of district assignment.
+  observeEvent(input$geocode, {
+    req(input$memberList, input$streetColumn, input$cityColumn)
+    tryCatch({
+      memberList <- csvData()
+
+      progress <- Progress$new()
+      on.exit(progress$close())
+      progress$set(message = "Preparing to geocode...", value = 0.1)
+
+      # Only restrict to a district extent when asked AND files are available;
+      # otherwise geocode unrestricted so this can run before districts exist.
+      boundaries <- NULL
+      if (isTRUE(input$restrictGeo)) {
+        files <- districtFiles()
+        if (is.null(files) || nrow(files) == 0) {
+          showNotification(
+            "Restrict is on but no district files added yet; geocoding without a restriction.",
+            type = "warning", duration = 5
+          )
+        } else {
+          boundaries <- compute_search_extent(read_prepared_layers())
+        }
+      }
+
+      ensure_geocoded(memberList, input$streetColumn, input$cityColumn, boundaries, progress)
+      progress$set(message = "Complete!", value = 1)
+      showNotification("Geocoding complete.", type = "message", duration = 3)
+    }, error = function(e) {
+      showNotification(paste("Error:", e$message), type = "error", duration = NULL)
+      print(paste("Geocode error:", e))
+    })
+  })
+
+  # Live geocoding status shown under the Geocode button.
+  output$geocodeStatus <- renderText({
+    g <- geocodedData()
+    if (is.null(g)) return("Addresses not geocoded yet.")
+    n_ok      <- sum(g$geocode_status == "OK")
+    n_fail    <- sum(g$geocode_status == "No geocode match")
+    n_missing <- sum(g$geocode_status == "Missing address")
+    sprintf("Geocoded %d of %d addresses (%d no match, %d missing address).",
+            n_ok, nrow(g), n_fail, n_missing)
+  })
+
   observeEvent(input$memberList, {
     req(input$memberList)
     csvData(read.csv(input$memberList$datapath))
+    # A new CSV invalidates any cached geocode.
+    geocodedData(NULL)
+    geocodeKey(NULL)
   })
   
   output$columnSelection <- renderUI({
@@ -342,76 +238,74 @@ server <- function(input, output, session) {
     )
   })
 
-  # One text input per uploaded district file, letting the user name each layer.
-  # The name becomes the prefix on that layer's output columns (e.g. a name of
-  # "Congressional" turns a "DISTRICT" column into "Congressional_DISTRICT").
-  # Defaults to the uploaded file's base name.
+  # One text input per accumulated district file, letting the user name each
+  # layer. The name becomes the prefix on that layer's output columns (e.g. a
+  # name of "Congressional" turns a "DISTRICT" column into
+  # "Congressional_DISTRICT"). Defaults to the uploaded file's base name.
+  #
+  # This UI re-renders whenever a file is added, which recreates the text boxes.
+  # We isolate() the current input values and reuse them as defaults so any names
+  # the user already typed are preserved instead of reverting to the file name.
   output$districtNaming <- renderUI({
-    req(input$districts)
-    lapply(seq_len(nrow(input$districts)), function(i) {
-      textInput(
-        inputId = paste0("districtName_", i),
-        label   = paste("Name for district file", i),
-        value   = tools::file_path_sans_ext(input$districts$name[i])
-      )
+    req(districtFiles())
+    files <- districtFiles()
+    isolate({
+      lapply(seq_len(nrow(files)), function(i) {
+        current <- input[[paste0("districtName_", i)]]
+        default <- if (!is.null(current) && nzchar(current)) {
+          current
+        } else {
+          tools::file_path_sans_ext(files$name[i])
+        }
+        textInput(
+          inputId = paste0("districtName_", i),
+          label   = paste("Name for district file", i),
+          value   = default
+        )
+      })
     })
   })
   
+  # Manually clear the geocode cache so the next run geocodes from scratch.
+  observeEvent(input$regeocode, {
+    geocodedData(NULL)
+    geocodeKey(NULL)
+    showNotification("Geocode cache cleared. The next run will re-geocode.",
+                     type = "message", duration = 4)
+  })
+
   observeEvent(input$run, {
-    req(input$memberList, input$districts, input$streetColumn, input$cityColumn)
+    req(input$memberList, input$streetColumn, input$cityColumn)
 
     tryCatch({
       memberList <- csvData()
-
-      # Check that at least one district file was uploaded
-      if (is.null(input$districts) || nrow(input$districts) == 0) {
-        stop("At least one district file is required")
-      }
 
       # Create a progress indicator
       progress <- Progress$new()
       on.exit(progress$close())
       progress$set(message = "Loading district files...", value = 0.1)
 
-      # Read all district files into a list
-      districtsList <- list()
-      for (i in 1:nrow(input$districts)) {
-        districtsList[[i]] <- tryCatch({
-          unzip_and_read_spatial(input$districts$datapath[i])
-        }, error = function(e) {
-          stop(paste("Error reading district file", i, ":", e$message))
-        })
-      }
+      # Read, validate and name-prefix the accumulated district layers.
+      layers <- read_prepared_layers()
+      print(paste("Number of district files loaded:", length(layers)))
 
-      print(paste("Number of district files loaded:", length(districtsList)))
+      # Optional geocoding restriction: only build a search extent when the user
+      # asks for it (off by default). See compute_search_extent() for rationale.
+      boundaries <- if (isTRUE(input$restrictGeo)) compute_search_extent(layers) else NULL
 
-      # Collect the per-file layer names from the naming UI, falling back to the
-      # uploaded file's base name if a field is left blank.
-      districtNames <- vapply(seq_len(nrow(input$districts)), function(i) {
-        nm <- input[[paste0("districtName_", i)]]
-        if (is.null(nm) || !nzchar(nm)) {
-          tools::file_path_sans_ext(input$districts$name[i])
-        } else {
-          nm
-        }
-      }, character(1))
+      # Geocode once and reuse: if the user already pressed "Geocode Addresses"
+      # (or ran before) with the same address/city + extent, this returns the
+      # cached points instead of geocoding again.
+      geocoded <- ensure_geocoded(memberList, input$streetColumn, input$cityColumn,
+                                  boundaries, progress)
 
-      progress$set(message = "Starting address assignment...", value = 0.2)
-
+      # --- Assign to districts ---------------------------------------------
+      progress$set(message = "Assigning districts...", value = 0.7)
       result <- tryCatch({
-        AssignDistricts(memberList,
-                        StreetCol = input$streetColumn,
-                        CityCol = input$cityColumn,
-                        districtsList = districtsList,
-                        removeGEO = input$removeGEO,
-                        progress = progress,
-                        districtNames = districtNames)
+        AssignToDistricts(geocoded, layers, removeGEO = input$removeGEO)
       }, error = function(e) {
-        print(paste("Error in AssignDistricts:", e$message))
-        print("memberList structure:")
-        print(str(memberList))
-        print("districtsList structure:")
-        print(str(districtsList))
+        print(paste("Error in AssignToDistricts:", e$message))
+        print(str(geocoded))
         stop(e)
       })
 
@@ -424,7 +318,7 @@ server <- function(input, output, session) {
       if (!is.null(stats)) {
         # Build summary message
         summary_msg <- sprintf(
-          "Processing complete!\n\nTotal addresses: %d\nInvalid addresses (blank/NA): %d\nFailed geocoding: %d\nSuccessfully assigned: %d",
+          "Processing complete!\n\nTotal addresses: %d\nInvalid addresses (blank/NA): %d\nFailed geocoding: %d\nSuccessfully geocoded: %d",
           stats$original_count,
           stats$invalid_address_count,
           stats$failed_geocoding_count,
