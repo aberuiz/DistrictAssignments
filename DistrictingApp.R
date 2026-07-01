@@ -18,9 +18,66 @@ library(gdalraster)
 # Increase the maximum file upload size to 20MB
 options(shiny.maxRequestSize = 20 * 1024^2)
 
-# AssignDistricts function
-# Modified for Shiny App - supports multiple district layers
-AssignDistricts <- function(memberList, StreetCol, CityCol, districtsList, removeGEO = TRUE, progress = NULL){
+# ---------------------------------------------------------------------------
+# District layer naming helpers (kept in sync with AssignDistricts.R)
+# ---------------------------------------------------------------------------
+
+# Turn an arbitrary label into a safe column-name prefix: non-alphanumeric runs
+# collapse to a single underscore, and leading/trailing underscores are trimmed.
+# e.g. "State Senate (2020)" -> "State_Senate_2020"
+sanitize_layer_name <- function(name) {
+  name <- gsub("[^A-Za-z0-9]+", "_", name)
+  gsub("^_+|_+$", "", name)
+}
+
+# Prefix a district layer's attribute (non-geometry) columns with its layer name
+# so columns from multiple layers stay distinct and self-describing. A "DISTRICT"
+# column in the "Congressional" layer becomes "Congressional_DISTRICT". The
+# geometry column is left untouched. An empty/blank name is a no-op.
+prefix_layer_columns <- function(layer, layer_name) {
+  layer_name <- sanitize_layer_name(layer_name)
+  if (nchar(layer_name) == 0) return(layer)
+
+  geom_col <- attr(layer, "sf_column")
+  data_cols <- setdiff(names(layer), geom_col)
+  if (length(data_cols) > 0) {
+    idx <- match(data_cols, names(layer))
+    names(layer)[idx] <- paste0(layer_name, "_", data_cols)
+  }
+  layer
+}
+
+# Determine a display name for each district layer, used to prefix its columns.
+# In the Shiny app the layers arrive already-read (as sf objects), so names come
+# from districtNames (supplied from the per-file UI text inputs); when absent a
+# positional fallback of "District_1", "District_2", ... is used.
+resolve_layer_names <- function(districtsList, districtNames = NULL) {
+  list_names <- names(districtsList)
+  vapply(seq_along(districtsList), function(i) {
+    if (!is.null(districtNames) && length(districtNames) >= i && nzchar(districtNames[i])) {
+      return(districtNames[i])
+    }
+    if (!is.null(list_names) && nzchar(list_names[i])) {
+      return(list_names[i])
+    }
+    paste0("District_", i)
+  }, character(1))
+}
+
+# AssignDistricts() -- Shiny variant
+# Geocodes a member list and assigns each address to the district(s) it falls
+# within, across one or more district layers, reporting progress to the UI.
+#
+# Arguments:
+#   memberList    - data.frame of addresses (already loaded from the CSV upload).
+#   StreetCol     - name of the street-address column in memberList.
+#   CityCol       - name of the city column in memberList.
+#   districtsList - list of already-read district sf layers.
+#   removeGEO     - if TRUE (default) the geometry column is dropped from output.
+#   progress      - optional shiny Progress object for UI status updates.
+#   districtNames - optional character vector, one name per district layer, used
+#                   to prefix each layer's columns so they stay distinguishable.
+AssignDistricts <- function(memberList, StreetCol, CityCol, districtsList, removeGEO = TRUE, progress = NULL, districtNames = NULL){
   # Use the selected columns for Street.Address and City
   memberList$Street.Address <- memberList[[StreetCol]]
   memberList$City <- memberList[[CityCol]]
@@ -42,6 +99,11 @@ AssignDistricts <- function(memberList, StreetCol, CityCol, districtsList, remov
 
   # Ensure all districts have valid geometry and use the first one for boundaries
   districtsList <- lapply(districtsList, sf::st_make_valid)
+
+  # Prefix each layer's attribute columns with its resolved name so columns from
+  # different layers stay distinct in the joined output (see #4).
+  layer_names <- resolve_layer_names(districtsList, districtNames)
+  districtsList <- Map(prefix_layer_columns, districtsList, layer_names)
 
   boundaries <- sf::st_bbox(districtsList[[1]])
 
@@ -190,6 +252,7 @@ ui <- fluidPage(
                 accept = ".zip",
                 multiple = TRUE),
       helpText("Upload one or more district ZIP files. At least one is required."),
+      uiOutput("districtNaming"),
       checkboxInput("removeGEO", "Remove Geometry Column", value = TRUE),
       actionButton("run", "Assign Districts"),
       textOutput("downloadInstructions"),
@@ -222,13 +285,28 @@ server <- function(input, output, session) {
     default_city <- if("City" %in% columns) "City" else columns[1]
     
     tagList(
-      selectInput("streetColumn", "Select Street Address Column", 
-                  choices = columns, 
+      selectInput("streetColumn", "Select Street Address Column",
+                  choices = columns,
                   selected = default_street),
-      selectInput("cityColumn", "Select City Column", 
-                  choices = columns, 
+      selectInput("cityColumn", "Select City Column",
+                  choices = columns,
                   selected = default_city)
     )
+  })
+
+  # One text input per uploaded district file, letting the user name each layer.
+  # The name becomes the prefix on that layer's output columns (e.g. a name of
+  # "Congressional" turns a "DISTRICT" column into "Congressional_DISTRICT").
+  # Defaults to the uploaded file's base name.
+  output$districtNaming <- renderUI({
+    req(input$districts)
+    lapply(seq_len(nrow(input$districts)), function(i) {
+      textInput(
+        inputId = paste0("districtName_", i),
+        label   = paste("Name for district file", i),
+        value   = tools::file_path_sans_ext(input$districts$name[i])
+      )
+    })
   })
   
   observeEvent(input$run, {
@@ -259,6 +337,17 @@ server <- function(input, output, session) {
 
       print(paste("Number of district files loaded:", length(districtsList)))
 
+      # Collect the per-file layer names from the naming UI, falling back to the
+      # uploaded file's base name if a field is left blank.
+      districtNames <- vapply(seq_len(nrow(input$districts)), function(i) {
+        nm <- input[[paste0("districtName_", i)]]
+        if (is.null(nm) || !nzchar(nm)) {
+          tools::file_path_sans_ext(input$districts$name[i])
+        } else {
+          nm
+        }
+      }, character(1))
+
       progress$set(message = "Starting address assignment...", value = 0.2)
 
       result <- tryCatch({
@@ -267,7 +356,8 @@ server <- function(input, output, session) {
                         CityCol = input$cityColumn,
                         districtsList = districtsList,
                         removeGEO = input$removeGEO,
-                        progress = progress)
+                        progress = progress,
+                        districtNames = districtNames)
       }, error = function(e) {
         print(paste("Error in AssignDistricts:", e$message))
         print("memberList structure:")

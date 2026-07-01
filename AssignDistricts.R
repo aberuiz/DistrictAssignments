@@ -5,7 +5,75 @@ library(yyjsonr)
 library(dplyr)
 library(gdalraster)
 
-AssignDistricts <- function(memberList, StreetCol="Street.Address", CityCol="City", districtsList, removeGEO = TRUE){
+# ---------------------------------------------------------------------------
+# District layer naming helpers
+# ---------------------------------------------------------------------------
+
+# Turn an arbitrary label into a safe column-name prefix: non-alphanumeric runs
+# collapse to a single underscore, and leading/trailing underscores are trimmed.
+# e.g. "State Senate (2020)" -> "State_Senate_2020"
+sanitize_layer_name <- function(name) {
+  name <- gsub("[^A-Za-z0-9]+", "_", name)
+  gsub("^_+|_+$", "", name)
+}
+
+# Prefix a district layer's attribute (non-geometry) columns with its layer name
+# so columns from multiple layers stay distinct and self-describing. A "DISTRICT"
+# column in the "Congressional" layer becomes "Congressional_DISTRICT". The
+# geometry column is left untouched. An empty/blank name is a no-op.
+prefix_layer_columns <- function(layer, layer_name) {
+  layer_name <- sanitize_layer_name(layer_name)
+  if (nchar(layer_name) == 0) return(layer)
+
+  geom_col <- attr(layer, "sf_column")
+  data_cols <- setdiff(names(layer), geom_col)
+  if (length(data_cols) > 0) {
+    idx <- match(data_cols, names(layer))
+    names(layer)[idx] <- paste0(layer_name, "_", data_cols)
+  }
+  layer
+}
+
+# Determine a display name for each district layer, used to prefix its columns.
+# Precedence, per layer:
+#   1. an explicit districtNames value (if supplied and non-blank)
+#   2. the name attached to the districtsList element (named list)
+#   3. the file's base name, when the element is still a file path
+#   4. a positional fallback ("District_1", "District_2", ...)
+resolve_layer_names <- function(districtsList, districtNames = NULL) {
+  list_names <- names(districtsList)
+  vapply(seq_along(districtsList), function(i) {
+    if (!is.null(districtNames) && length(districtNames) >= i && nzchar(districtNames[i])) {
+      return(districtNames[i])
+    }
+    if (!is.null(list_names) && nzchar(list_names[i])) {
+      return(list_names[i])
+    }
+    el <- districtsList[[i]]
+    if (is.character(el) && length(el) == 1) {
+      return(tools::file_path_sans_ext(basename(el)))
+    }
+    paste0("District_", i)
+  }, character(1))
+}
+
+# AssignDistricts()
+# Geocodes a member list and assigns each address to the district(s) it falls
+# within, across one or more district layers.
+#
+# Arguments:
+#   memberList    - a data.frame, or a path to a CSV, of addresses to assign.
+#   StreetCol     - name of the street-address column in memberList.
+#   CityCol       - name of the city column in memberList.
+#   districtsList - a single district layer/path, or a (optionally named) list
+#                   of district layers/paths (.shp or .geojson). Names, when
+#                   present, are used to prefix that layer's output columns.
+#   removeGEO     - if TRUE (default) the geometry column is dropped from the
+#                   returned table for clean CSV export.
+#   districtNames - optional character vector, one name per district layer, used
+#                   to prefix each layer's columns and disambiguate them in the
+#                   output. Overrides names(districtsList). See resolve_layer_names().
+AssignDistricts <- function(memberList, StreetCol="Street.Address", CityCol="City", districtsList, removeGEO = TRUE, districtNames = NULL){
   # Member List Path - read if it's a file path, otherwise use as-is
   if (is.character(memberList) && length(memberList) == 1) {
     memberList <- read.csv(memberList)
@@ -67,10 +135,15 @@ AssignDistricts <- function(memberList, StreetCol="Street.Address", CityCol="Cit
     return(spatial_object)
   }
 
-  # Convert districtsList to a list if needed
-  if (!is.list(districtsList)) {
+  # Convert districtsList to a list if needed. A single sf object is itself a
+  # list, so wrap anything that isn't already a list-of-layers.
+  if (!inherits(districtsList, "list")) {
     districtsList <- list(districtsList)
   }
+
+  # Resolve a name for each layer BEFORE reading, so file-path basenames are
+  # still available to fall back on (reading replaces paths with sf objects).
+  layer_names <- resolve_layer_names(districtsList, districtNames)
 
   # Read spatial files if they're file paths
   for (i in seq_along(districtsList)) {
@@ -81,6 +154,10 @@ AssignDistricts <- function(memberList, StreetCol="Street.Address", CityCol="Cit
 
   # Ensure all districts have valid geometry
   districtsList <- lapply(districtsList, sf::st_make_valid)
+
+  # Prefix each layer's attribute columns with its resolved name so that columns
+  # from different layers stay distinct in the joined output (see #4).
+  districtsList <- Map(prefix_layer_columns, districtsList, layer_names)
 
   # BBOX from first district
   boundaries <- sf::st_bbox(districtsList[[1]])
