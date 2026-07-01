@@ -82,20 +82,23 @@ AssignDistricts <- function(memberList, StreetCol, CityCol, districtsList, remov
   memberList$Street.Address <- memberList[[StreetCol]]
   memberList$City <- memberList[[CityCol]]
 
-  # Store original row count and identifiers
+  # Store original row count and give every row a stable identifier. Nothing is
+  # ever dropped from here on: rows that can't be geocoded or assigned are FLAGGED
+  # via the `geocode_status` column and carried through to the output, so a few
+  # bad rows never derail the whole run.
   original_count <- nrow(memberList)
   memberList$original_row_id <- seq_len(nrow(memberList))
 
-  # Remove rows with NA or blank in Street.Address or City column
+  # Flag rows whose street address or city is blank/NA. These can't be geocoded,
+  # but they stay in the table with a status of "Missing address".
   valid_addresses <- !is.na(memberList$Street.Address) &
                      memberList$Street.Address != "" &
                      !is.na(memberList$City) &
                      memberList$City != ""
 
-  invalid_rows <- memberList[!valid_addresses, ]
-  memberList <- memberList[valid_addresses, ]
+  memberList$geocode_status <- ifelse(valid_addresses, "OK", "Missing address")
 
-  print(paste("Number of valid addresses:", nrow(memberList)))
+  print(paste("Number of geocodable addresses:", sum(valid_addresses)))
 
   # Ensure all districts have valid geometry and use the first one for boundaries
   districtsList <- lapply(districtsList, sf::st_make_valid)
@@ -112,44 +115,78 @@ AssignDistricts <- function(memberList, StreetCol, CityCol, districtsList, remov
     progress$set(message = "Geocoding addresses...", value = 0.3)
   }
 
-  memberGeos <- arcgisgeocode::find_address_candidates(
-    address = memberList$Street.Address,
-    city = memberList$City,
-    search_extent = boundaries,
-    max_locations = 1
-  )
+  # --- Geocoding -----------------------------------------------------------
+  # Geocode only the rows that have a usable address. arcgisgeocode returns a
+  # `result_id` column that is a 1-based index back into the vector of addresses
+  # we sent. We use it to place each result onto the exact source row instead of
+  # binding by position. This matters because the service can return FEWER rows
+  # than we sent (an address may yield no candidate) -- a positional cbind would
+  # then silently misalign every following row. Keying on result_id keeps rows
+  # aligned and lets unmatched inputs simply stay NA, so we no longer need the
+  # old hard stop() on a row-count mismatch.
+  valid_idx <- which(valid_addresses)
+
+  if (length(valid_idx) > 0) {
+    memberGeos <- arcgisgeocode::find_address_candidates(
+      address = memberList$Street.Address[valid_idx],
+      city = memberList$City[valid_idx],
+      search_extent = boundaries,
+      max_locations = 1
+    )
+    print(paste("Number of geocoded results:", nrow(memberGeos)))
+
+    # Carry every geocode field back onto the full member list, keyed by
+    # result_id. Columns are pre-filled with NA so any row without a match
+    # (or without a usable address) stays NA rather than misaligning.
+    geo_df <- if (inherits(memberGeos, "sf")) sf::st_drop_geometry(memberGeos) else memberGeos
+
+    # result_id maps each returned candidate back to its input row (1-based). If a
+    # future package version omits it, fall back to positional alignment only when
+    # the counts match exactly -- otherwise stop rather than misalign silently.
+    if ("result_id" %in% names(geo_df)) {
+      result_ids <- geo_df$result_id
+    } else if (nrow(geo_df) == length(valid_idx)) {
+      result_ids <- seq_len(nrow(geo_df))
+    } else {
+      stop("Geocoder returned no 'result_id' and an unexpected row count; cannot align results safely.")
+    }
+
+    geo_cols <- setdiff(names(geo_df), "result_id")
+    target_rows <- valid_idx[result_ids]
+    for (col in geo_cols) {
+      if (is.null(memberList[[col]])) memberList[[col]] <- NA
+      memberList[[col]][target_rows] <- geo_df[[col]]
+    }
+  } else {
+    print("No geocodable addresses found.")
+  }
 
   # Update progress after geocoding
   if (!is.null(progress)) {
     progress$set(message = "Processing results...", value = 0.6)
   }
 
-  print(paste("Number of geocoded results:", nrow(memberGeos)))
+  # Guarantee x/y coordinate columns exist even if geocoding produced none.
+  if (is.null(memberList$x)) memberList$x <- NA_real_
+  if (is.null(memberList$y)) memberList$y <- NA_real_
 
-  # Strict validation: row counts MUST match
-  if (nrow(memberList) != nrow(memberGeos)) {
-    stop(paste("Geocoding error: Expected", nrow(memberList),
-               "results but got", nrow(memberGeos),
-               "This indicates a problem with the geocoding service."))
-  }
+  # Flag address-valid rows that still failed to geocode (no candidate returned).
+  failed_geo <- valid_addresses & (is.na(memberList$x) | is.na(memberList$y))
+  memberList$geocode_status[failed_geo] <- "No geocode match"
 
-  combo_df <- data.frame(memberList, memberGeos)
-
-  # Identify rows with failed geocoding (NA coordinates)
-  failed_geocoding <- is.na(combo_df$x) | is.na(combo_df$y)
-  failed_rows <- combo_df[failed_geocoding, c("original_row_id", "Street.Address", "City")]
-
-  # Remove rows with NA in x or y coordinates
-  combo_df <- combo_df[!failed_geocoding, ]
-
-  print(paste("Number of valid geocoded addresses:", nrow(combo_df)))
+  print(paste("Number of geocoded addresses:",
+              sum(!is.na(memberList$x) & !is.na(memberList$y))))
 
   # Update progress before spatial joins
   if (!is.null(progress)) {
     progress$set(message = "Performing spatial joins...", value = 0.8)
   }
 
-  member_pts <- combo_df |>
+  # --- Spatial assignment --------------------------------------------------
+  # Turn EVERY row into a point. Rows with NA coordinates (missing address or no
+  # geocode match) become empty points via na.fail = FALSE; a left st_join then
+  # keeps them in the output with NA district columns. Nothing is dropped.
+  member_pts <- memberList |>
     sf::st_as_sf(
       coords = c("x","y"),
       crs = sf::st_crs("EPSG:4326"),
@@ -172,21 +209,32 @@ AssignDistricts <- function(memberList, StreetCol, CityCol, districtsList, remov
     }
   }
 
-  # Store statistics as attributes
+  # Drop geometry for a clean tabular/CSV result unless the caller wants it.
   result <- if (isTRUE(removeGEO)) {
     sf::st_drop_geometry(final)
   } else {
     final
   }
 
+  # --- Summary -------------------------------------------------------------
+  # Counts come from the flag column on the (row-complete) member list, so they
+  # reflect input rows regardless of any join row-multiplication.
+  invalid_count <- sum(memberList$geocode_status == "Missing address")
+  failed_count  <- sum(memberList$geocode_status == "No geocode match")
+  success_count <- sum(memberList$geocode_status == "OK")
+
+  status_cols <- c("original_row_id", "Street.Address", "City", "geocode_status")
+  invalid_rows <- memberList[memberList$geocode_status == "Missing address", status_cols]
+  failed_rows  <- memberList[memberList$geocode_status == "No geocode match", status_cols]
+
   # Attach summary statistics
   attr(result, "summary_stats") <- list(
     original_count = original_count,
-    invalid_address_count = nrow(invalid_rows),
-    invalid_rows = if(nrow(invalid_rows) > 0) invalid_rows else NULL,
-    failed_geocoding_count = nrow(failed_rows),
-    failed_geocoding_rows = if(nrow(failed_rows) > 0) failed_rows else NULL,
-    successful_count = nrow(result)
+    invalid_address_count = invalid_count,
+    invalid_rows = if(invalid_count > 0) invalid_rows else NULL,
+    failed_geocoding_count = failed_count,
+    failed_geocoding_rows = if(failed_count > 0) failed_rows else NULL,
+    successful_count = success_count
   )
 
   return(result)
@@ -407,16 +455,24 @@ server <- function(input, output, session) {
   output$results <- renderDT({
     req(results())
     result_data <- results()
-    
+
     if (is.data.frame(result_data) && nrow(result_data) > 0) {
-      result_data <- result_data[, sapply(result_data, is.atomic)]
-      max_length <- max(sapply(result_data, length))
-      result_data <- as.data.frame(lapply(result_data, function(x) {
-        length(x) <- max_length
-        x
-      }))
-      
-      datatable(result_data, options = list(scrollX = TRUE, pageLength = 5))
+      # Keep only atomic columns (drops any sf geometry list-column). Rows are
+      # now aligned by construction, so the old length-padding workaround is gone.
+      result_data <- result_data[, sapply(result_data, is.atomic), drop = FALSE]
+
+      dt <- datatable(result_data, options = list(scrollX = TRUE, pageLength = 5))
+
+      # Highlight problem rows so they're visible instead of silently dropped:
+      # anything not "OK" (missing address / no geocode match) gets a red tint.
+      if ("geocode_status" %in% names(result_data)) {
+        dt <- formatStyle(
+          dt, "geocode_status",
+          target = "row",
+          backgroundColor = styleEqual("OK", "white", default = "#ffd9d9")
+        )
+      }
+      dt
     } else {
       datatable(data.frame(Message = "No valid results to display"))
     }
