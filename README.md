@@ -61,8 +61,10 @@ run_app()
 
 6.  **Review the results.** A preview table appears. Rows that couldn't be
     geocoded are **highlighted red** and carry a `geocode_status` of
-    `Missing address` (blank/NA address) or `No geocode match` (address not
-    found). Geocodes with a low match score (`geo_score` below 85) are
+    `Missing address` (blank/NA address), `No geocode match` (address not
+    found), or `Geocoder error` (the geocoding request failed — e.g. a
+    network hiccup — so clearing the geocode cache and re-running may fix
+    it). Geocodes with a low match score (`geo_score` below 85) are
     **highlighted amber** — they matched, but possibly to the wrong place, so
     give them a second look. Nothing is dropped — every input row appears in
     the output.
@@ -134,9 +136,24 @@ as an attribute; `print_summary(result)` writes them to the console.
 ## How results are handled
 
 -   **Every input row is kept.** Rows that can't be geocoded are flagged, not
-    removed, via `geocode_status` (`OK` / `Missing address` / `No geocode match`).
+    removed, via `geocode_status` (`OK` / `Missing address` /
+    `No geocode match` / `Geocoder error`).
 -   **Rows stay matched.** Geocoding results are aligned to their exact source
     row, so a blank or unmatched address never shifts the other rows.
+-   **Points outside every district stay blank.** A geocoded address that
+    doesn't fall inside any polygon of a layer simply gets `NA` for that
+    layer's columns (and plots gray on the app's map).
+-   **Large lists are geocoded in chunks** (500 addresses per request batch),
+    so a transient service failure only affects its own chunk: those rows are
+    flagged `Geocoder error` (retryable — and the census fallback still gets
+    a chance at them) instead of the whole run aborting.
+-   **Layer names are made unique.** Any number of district layers can be
+    used at once; duplicate names (e.g. two files both named `congress`) are
+    disambiguated (`congress`, `congress_1`) so every layer keeps distinct,
+    predictable output columns. If an input column already has the same name
+    as a layer's output column (say, a re-uploaded export carrying
+    `Congressional_DISTRICT`), the input copy is renamed with an `_input`
+    suffix and the fresh assignment keeps the expected name.
 -   **Overlapping polygons** are resolved to the first matching district per
     layer (with a note), so a point is never duplicated into multiple rows.
 -   **Boundary points are assigned.** By default a point lying exactly on a

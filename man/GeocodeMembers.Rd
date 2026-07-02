@@ -36,7 +36,10 @@ The member data.frame with these columns added/replaced:
 \describe{
 \item{original_row_id}{stable 1..N identifier for mapping results back}
 \item{Street.Address, City}{the resolved address/city used for geocoding}
-\item{geocode_status}{\code{"OK"}, \code{"Missing address"}, or \code{"No geocode match"}}
+\item{geocode_status}{\code{"OK"}, \code{"Missing address"} (blank street/city),
+\code{"No geocode match"} (the geocoder found no candidate), or
+\code{"Geocoder error"} (the request failed -- e.g. a network/service
+problem -- so the address was never actually tried)}
 \item{geo_x, geo_y}{longitude/latitude (\code{NA} where not geocoded)}
 \item{geo_source}{which service located the row: \code{"ArcGIS"}, \code{"Census"}
 (fallback), or \code{NA} if not geocoded}
@@ -56,6 +59,13 @@ The columns \code{original_row_id}, \code{geocode_status}, and everything prefix
 already contains them (e.g. a re-uploaded previous export), they are
 replaced with freshly computed values so stale results can never leak into
 a new run.
+
+The address and city columns are coerced to character (so a column read as
+numeric still geocodes), and requests are sent in chunks of 500 so that on
+large lists a transient service failure only affects its own chunk: those
+rows are flagged \code{"Geocoder error"} (with a warning naming the row range)
+instead of aborting the run, and can be recovered by re-running or by the
+census fallback.
 }
 \examples{
 \dontrun{

@@ -1,10 +1,13 @@
 # Geocoding a member list.
 
 # Fallback geocoder: the US Census Bureau's free onelineaddress endpoint.
-# Sequential single requests -- this only ever runs on the (typically few) rows
-# the primary geocoder failed on, so batch plumbing isn't worth its complexity.
+# Sequential single requests -- this only ever runs on the rows the primary
+# geocoder failed on, so batch plumbing isn't worth its complexity.
 # Returns one row per input with x/y/matched_address, NA where no match; a
-# request error just leaves its row NA (the row simply stays failed).
+# request error just leaves its row NA (the row simply stays failed). If the
+# service itself is unreachable (several requests in a row error, as opposed to
+# merely not matching), the loop stops early instead of burning a 30-second
+# timeout on every remaining row of a large failed batch.
 geocode_census_oneline <- function(street, city, verbose = TRUE) {
   out <- data.frame(
     x = rep(NA_real_, length(street)),
@@ -15,8 +18,12 @@ geocode_census_oneline <- function(street, city, verbose = TRUE) {
     httr2::req_user_agent("DistrictAssignments R package (https://github.com/aberuiz/DistrictAssignments)") |>
     httr2::req_timeout(30)
 
+  consecutive_errors <- 0L
   for (i in seq_along(street)) {
-    tryCatch({
+    if (verbose && length(street) > 100 && i %% 100 == 0) {
+      cat(sprintf("Census fallback: %d of %d...\n", i, length(street)))
+    }
+    request_ok <- tryCatch({
       resp <- base_req |>
         httr2::req_url_query(
           address = paste(street[i], city[i], sep = ", "),
@@ -35,10 +42,102 @@ geocode_census_oneline <- function(street, city, verbose = TRUE) {
         out$y[i] <- as.numeric(coords$y)
         out$matched_address[i] <- as.character(matches$matchedAddress[1])
       }
+      TRUE
     }, error = function(e) {
       if (verbose) cat(sprintf("Census fallback request failed for row %d: %s\n", i, conditionMessage(e)))
+      FALSE
     })
+
+    if (request_ok) {
+      consecutive_errors <- 0L
+    } else {
+      consecutive_errors <- consecutive_errors + 1L
+      if (consecutive_errors >= 5L && i < length(street)) {
+        warning(sprintf(
+          "Census fallback stopped after %d consecutive request failures; %d remaining address(es) left ungeocoded.",
+          consecutive_errors, length(street) - i
+        ), call. = FALSE)
+        break
+      }
+    }
   }
+  out
+}
+
+# Primary geocoder call, split into chunks so one bad request can't sink a
+# whole run. arcgisgeocode::find_address_candidates() sends one HTTP request
+# per address and aborts the ENTIRE call if any response errors, so on a list
+# of thousands of rows a single transient failure would otherwise lose
+# everything. A failed chunk raises a warning and its rows simply stay
+# ungeocoded ("No geocode match"), where the census fallback can still retry
+# them. Returns a plain data.frame (geometry dropped, atomic columns only)
+# whose `input_id` indexes into the FULL street/city vectors.
+geocode_arcgis_chunked <- function(street, city, boundaries = NULL,
+                                   verbose = TRUE, chunk_size = 500L) {
+  n <- length(street)
+  starts <- seq.int(1L, n, by = chunk_size)
+  pieces <- vector("list", length(starts))
+  # Full-vector indices whose REQUEST failed (vs. simply not matching); the
+  # caller flags them "Geocoder error" so a service hiccup is never mistaken
+  # for a bad address. Returned as the "error_input_ids" attribute.
+  error_ids <- integer(0)
+
+  for (k in seq_along(starts)) {
+    idx <- starts[k]:min(starts[k] + chunk_size - 1L, n)
+    if (verbose && length(starts) > 1) {
+      cat(sprintf("Geocoding rows %d-%d of %d...\n", idx[1], idx[length(idx)], n))
+    }
+    args <- list(address = street[idx], city = city[idx], max_locations = 1)
+    if (!is.null(boundaries)) args$search_extent <- boundaries
+
+    res <- tryCatch(
+      do.call(arcgisgeocode::find_address_candidates, args),
+      error = function(e) {
+        warning(sprintf(
+          "Geocoding rows %d-%d failed (%s); they are flagged 'Geocoder error'.",
+          idx[1], idx[length(idx)], conditionMessage(e)
+        ), call. = FALSE)
+        NULL
+      }
+    )
+    if (is.null(res)) {
+      error_ids <- c(error_ids, idx)
+      next
+    }
+    if (inherits(res, "sf")) res <- sf::st_drop_geometry(res)
+    # Drop list-columns (e.g. the geocoder's nested `extents`) up front: they
+    # can't be rbind()ed reliably across chunks and are skipped downstream anyway.
+    res <- res[, vapply(res, is.atomic, logical(1)), drop = FALSE]
+
+    # Align results to their source rows via input_id (see the NOTE in
+    # GeocodeMembers about why input_id, never result_id). Inputs that return
+    # no candidate are simply absent from the response, so a positional
+    # fallback is only safe when the counts match exactly.
+    if (!"input_id" %in% names(res)) {
+      if (nrow(res) == length(idx)) {
+        res$input_id <- seq_along(idx)
+      } else {
+        stop("Geocoder response is missing 'input_id' and the row count is unexpected; cannot align results safely.")
+      }
+    }
+    # input_id is 1-based within the chunk; shift it to the full-vector index.
+    res$input_id <- suppressWarnings(as.integer(res$input_id)) + idx[1] - 1L
+    pieces[[k]] <- res
+  }
+
+  pieces <- pieces[!vapply(pieces, is.null, logical(1))]
+  out <- if (length(pieces) == 0) {
+    data.frame(input_id = integer(0))
+  } else {
+    # rbind chunks, filling any column a chunk happens to lack with NA.
+    all_cols <- unique(unlist(lapply(pieces, names)))
+    pieces <- lapply(pieces, function(p) {
+      for (col in setdiff(all_cols, names(p))) p[[col]] <- NA
+      p[, all_cols, drop = FALSE]
+    })
+    do.call(rbind, pieces)
+  }
+  attr(out, "error_input_ids") <- error_ids
   out
 }
 
@@ -70,6 +169,13 @@ read_member_file <- function(path) {
 #' replaced with freshly computed values so stale results can never leak into
 #' a new run.
 #'
+#' The address and city columns are coerced to character (so a column read as
+#' numeric still geocodes), and requests are sent in chunks of 500 so that on
+#' large lists a transient service failure only affects its own chunk: those
+#' rows are flagged `"Geocoder error"` (with a warning naming the row range)
+#' instead of aborting the run, and can be recovered by re-running or by the
+#' census fallback.
+#'
 #' @param memberList A data.frame, or a path to a `.csv` / `.xlsx` / `.xls`
 #'   file, of addresses (Excel files require the suggested `readxl` package).
 #' @param StreetCol Name of the street-address column.
@@ -86,7 +192,10 @@ read_member_file <- function(path) {
 #' \describe{
 #'   \item{original_row_id}{stable 1..N identifier for mapping results back}
 #'   \item{Street.Address, City}{the resolved address/city used for geocoding}
-#'   \item{geocode_status}{`"OK"`, `"Missing address"`, or `"No geocode match"`}
+#'   \item{geocode_status}{`"OK"`, `"Missing address"` (blank street/city),
+#'     `"No geocode match"` (the geocoder found no candidate), or
+#'     `"Geocoder error"` (the request failed -- e.g. a network/service
+#'     problem -- so the address was never actually tried)}
 #'   \item{geo_x, geo_y}{longitude/latitude (`NA` where not geocoded)}
 #'   \item{geo_source}{which service located the row: `"ArcGIS"`, `"Census"`
 #'     (fallback), or `NA` if not geocoded}
@@ -126,8 +235,11 @@ GeocodeMembers <- function(memberList, StreetCol, CityCol, boundaries = NULL,
     memberList <- memberList[, setdiff(names(memberList), stale), drop = FALSE]
   }
 
-  memberList$Street.Address <- memberList[[StreetCol]]
-  memberList$City <- memberList[[CityCol]]
+  # Coerce to character: a street or city column that Excel/CSV read as
+  # numeric (house numbers, ZIP-like values) would otherwise abort the whole
+  # run inside the geocoder's type check.
+  memberList$Street.Address <- as.character(memberList[[StreetCol]])
+  memberList$City <- as.character(memberList[[CityCol]])
 
   # Reserved identifier, always rewritten: downstream row alignment and
   # de-duplication assume it is unique and 1..N.
@@ -150,17 +262,22 @@ GeocodeMembers <- function(memberList, StreetCol, CityCol, boundaries = NULL,
   if (verbose) cat(paste("Number of geocodable addresses:", sum(valid_addresses), "\n"))
 
   valid_idx <- which(valid_addresses)
+  # Full-list row indices whose geocode REQUEST failed (chunk error); flagged
+  # "Geocoder error" below so they are distinguishable from true non-matches.
+  error_rows <- integer(0)
 
   if (length(valid_idx) > 0) {
     if (verbose) cat("Geocoding addresses...\n")
 
-    args <- list(
-      address = memberList$Street.Address[valid_idx],
-      city = memberList$City[valid_idx],
-      max_locations = 1
+    # Sent in chunks so one failed request can't abort the whole run (see
+    # geocode_arcgis_chunked); a failed chunk warns and its rows stay NA.
+    memberGeos <- geocode_arcgis_chunked(
+      memberList$Street.Address[valid_idx],
+      memberList$City[valid_idx],
+      boundaries = boundaries,
+      verbose = verbose
     )
-    if (!is.null(boundaries)) args$search_extent <- boundaries
-    memberGeos <- do.call(arcgisgeocode::find_address_candidates, args)
+    error_rows <- valid_idx[attr(memberGeos, "error_input_ids")]
 
     if (verbose) cat(paste("Number of geocoded results:", nrow(memberGeos), "\n"))
 
@@ -181,16 +298,10 @@ GeocodeMembers <- function(memberList, StreetCol, CityCol, boundaries = NULL,
     # Geocoder fields are prefixed with "geo_" (geo_x, geo_y, geo_score, ...) so
     # they can never overwrite a same-named column in the member CSV (a CSV with
     # its own "x"/"y"/"score" column would otherwise be clobbered).
-    geo_df <- if (inherits(memberGeos, "sf")) sf::st_drop_geometry(memberGeos) else memberGeos
-
-    if ("input_id" %in% names(geo_df)) {
-      input_ids <- suppressWarnings(as.integer(geo_df[["input_id"]]))
-    } else if (nrow(geo_df) == length(valid_idx)) {
-      # Fall back to positional alignment only when counts match exactly.
-      input_ids <- seq_len(nrow(geo_df))
-    } else {
-      stop("Geocoder response is missing 'input_id' and the row count is unexpected; cannot align results safely.")
-    }
+    # geocode_arcgis_chunked already dropped geometry/list-columns and
+    # guarantees an input_id column (indexing into the addresses we sent).
+    geo_df <- memberGeos
+    input_ids <- geo_df[["input_id"]]
 
     # Keep the first candidate per input (max_locations = 1 already limits to one,
     # but guard against repeats), and only ids that point to a real input row;
@@ -222,13 +333,23 @@ GeocodeMembers <- function(memberList, StreetCol, CityCol, boundaries = NULL,
   failed_geo <- valid_addresses & (is.na(memberList$geo_x) | is.na(memberList$geo_y))
   memberList$geocode_status[failed_geo] <- "No geocode match"
 
+  # Rows whose geocode request itself failed are a different situation from
+  # rows the geocoder examined and couldn't match: "Geocoder error" means the
+  # address was never really tried and a re-run may succeed; "No geocode
+  # match" means the address itself didn't resolve. Keeps a service hiccup
+  # from reading as thousands of "bad addresses".
+  if (length(error_rows) > 0) {
+    memberList$geocode_status[error_rows] <- "Geocoder error"
+  }
+
   # Which service located each row (NA where not geocoded). Set from the
   # primary pass first; the fallback below overwrites its recovered rows.
   memberList$geo_source <- ifelse(memberList$geocode_status == "OK", "ArcGIS", NA_character_)
 
-  # Optional second chance: retry the failed rows against the US Census
-  # geocoder. Keyed by row index, so alignment works exactly like the primary
-  # pass; rows the fallback also misses simply stay "No geocode match".
+  # Optional second chance: retry the failed rows (both "No geocode match"
+  # and "Geocoder error") against the US Census geocoder. Keyed by row index,
+  # so alignment works exactly like the primary pass; rows the fallback also
+  # misses simply keep their failure status.
   if (isTRUE(censusFallback) && any(failed_geo)) {
     idx <- which(failed_geo)
     if (verbose) cat(sprintf("Retrying %d failed address(es) with the Census geocoder...\n", length(idx)))

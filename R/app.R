@@ -212,6 +212,17 @@ app_server <- function(input, output, session) {
                                censusFallback = isTRUE(input$censusFallback))
     geocodedData(geocoded)
     geocodeKey(key)
+    # A chunk of requests can fail without sinking the run (see
+    # GeocodeMembers); warnings don't surface in Shiny, so tell the user here
+    # -- including how to retry, since the failed result is now cached.
+    n_err <- sum(geocoded$geocode_status == "Geocoder error")
+    if (n_err > 0) {
+      shiny::showNotification(
+        sprintf(paste("%d address(es) hit a geocoder service error and were not tried.",
+                      "Press 'Clear geocode cache' and geocode again to retry them."), n_err),
+        type = "warning", duration = NULL
+      )
+    }
     geocoded
   }
 
@@ -264,9 +275,13 @@ app_server <- function(input, output, session) {
     n_ok      <- sum(g$geocode_status == "OK")
     n_fail    <- sum(g$geocode_status == "No geocode match")
     n_missing <- sum(g$geocode_status == "Missing address")
+    n_err     <- sum(g$geocode_status == "Geocoder error")
     n_census  <- if (is.null(g$geo_source)) 0 else sum(g$geo_source == "Census", na.rm = TRUE)
     msg <- sprintf("Geocoded %d of %d addresses (%d no match, %d missing address).",
                    n_ok, nrow(g), n_fail, n_missing)
+    if (n_err > 0) {
+      msg <- paste0(msg, sprintf(" %d hit a geocoder error (clear the cache to retry).", n_err))
+    }
     if (n_census > 0) {
       msg <- paste0(msg, sprintf(" %d recovered by the Census fallback.", n_census))
     }
@@ -397,15 +412,29 @@ app_server <- function(input, output, session) {
           stats$successful_count
         )
 
-        # Add details about failed rows if any
+        if (isTRUE(stats$geocoder_error_count > 0)) {
+          summary_msg <- paste0(summary_msg,
+                                sprintf("\nGeocoder request errors (retryable): %d",
+                                        stats$geocoder_error_count))
+        }
+
+        # Add details about failed rows if any; cap the list so a large
+        # upload with many bad addresses doesn't produce a screen-filling
+        # notification (the table's geocode_status column has them all).
         if (stats$failed_geocoding_count > 0 && !is.null(stats$failed_geocoding_rows)) {
+          fr <- utils::head(stats$failed_geocoding_rows, 10)
           failed_details <- paste(
             sprintf("Row %d: %s, %s",
-                    stats$failed_geocoding_rows$original_row_id,
-                    stats$failed_geocoding_rows$Street.Address,
-                    stats$failed_geocoding_rows$City),
+                    fr$original_row_id, fr$Street.Address, fr$City),
             collapse = "\n"
           )
+          if (stats$failed_geocoding_count > nrow(fr)) {
+            failed_details <- paste0(
+              failed_details,
+              sprintf("\n... and %d more (see the geocode_status column)",
+                      stats$failed_geocoding_count - nrow(fr))
+            )
+          }
           summary_msg <- paste(summary_msg, "\n\nFailed addresses:\n", failed_details, sep = "")
         }
 

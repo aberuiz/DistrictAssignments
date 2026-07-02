@@ -30,6 +30,10 @@ Each layer's attribute columns are prefixed with the layer's name (e.g. a
 the joined output. Names are resolved per layer, in order of precedence:
 an explicit \code{districtNames} entry, the name on the \code{districtsList} element,
 the file's base name (for path elements), then a positional fallback.
+Duplicate names are made unique (with a message), so any number of layers
+-- including several files sharing a base name -- keep distinct, predictable
+output columns. Layers without a CRS or without any features are rejected
+with a clear error; a layer containing no polygons triggers a warning.
 }
 \examples{
 \dontrun{

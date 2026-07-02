@@ -104,3 +104,35 @@ test_that("layers in a projected CRS still receive WGS84 points", {
   res <- AssignToDistricts(fixture_geocoded(), layers, verbose = FALSE)
   expect_equal(res$Council_DISTRICT, c("South", "North", NA, NA))
 })
+
+test_that("input columns colliding with layer output columns are renamed", {
+  layers <- prepare_district_layers(list(Council = fixture_layer_ns()))
+  stale <- fixture_geocoded()
+  stale$Council_DISTRICT <- "stale value"   # e.g. a re-uploaded previous export
+
+  expect_message(
+    res <- AssignToDistricts(stale, layers),
+    "renamed"
+  )
+  # fresh assignment keeps the canonical name; the stale copy is suffixed
+  expect_equal(res$Council_DISTRICT, c("South", "North", NA, NA))
+  expect_equal(res$Council_DISTRICT_input, rep("stale value", 4))
+})
+
+test_that("summary distinguishes geocoder errors and caps the failure listing", {
+  layers <- prepare_district_layers(list(Council = fixture_layer_ns()))
+  g <- data.frame(
+    Street.Address = paste(1:12, "Nowhere Rd"),
+    City = "Austin",
+    original_row_id = 1:12,
+    geocode_status = c(rep("No geocode match", 11), "Geocoder error"),
+    geo_x = NA_real_, geo_y = NA_real_
+  )
+  res <- AssignToDistricts(g, layers, verbose = FALSE)
+  stats <- attr(res, "summary_stats")
+
+  expect_equal(stats$failed_geocoding_count, 12)
+  expect_equal(stats$geocoder_error_count, 1)
+  expect_output(print_summary(res), "and 2 more")
+  expect_output(print_summary(res), "geocoder request errors")
+})

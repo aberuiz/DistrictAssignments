@@ -128,3 +128,74 @@ test_that("live geocoding aligns results to their source rows", {
   # the geocoder's nested list-columns are not carried through
   expect_true(all(vapply(pts, is.atomic, logical(1))))
 })
+
+test_that("numeric street/city columns are coerced, not fatal", {
+  seen <- NULL
+  local_mocked_bindings(
+    find_address_candidates = function(address, city, ...) {
+      seen <<- list(address = address, city = city)
+      data.frame(input_id = integer(0))
+    },
+    .package = "arcgisgeocode"
+  )
+  # e.g. an Excel sheet whose address column came in as numbers
+  members <- data.frame(S = c(101, 102), C = c(78701, 78702))
+  pts <- GeocodeMembers(members, "S", "C", verbose = FALSE)
+
+  expect_true(is.character(seen$address))
+  expect_true(is.character(seen$city))
+  expect_equal(pts$geocode_status, rep("No geocode match", 2))
+})
+
+test_that("a failed geocode chunk only loses its own rows", {
+  local_mocked_bindings(
+    find_address_candidates = function(address, city, ...) {
+      if (any(address == "BOOM")) stop("simulated server error")
+      data.frame(input_id = seq_along(address),
+                 x = -97 - seq_along(address), y = 30 + seq_along(address))
+    },
+    .package = "arcgisgeocode"
+  )
+  street <- c("a", "b", "BOOM", "d", "e")
+  expect_warning(
+    res <- geocode_arcgis_chunked(street, rep("Austin", 5),
+                                  verbose = FALSE, chunk_size = 2L),
+    "Geocoding rows 3-4 failed"
+  )
+  # chunk 2 (rows 3-4) failed; surviving results keep their GLOBAL input ids
+  expect_equal(res$input_id, c(1L, 2L, 5L))
+  expect_equal(attr(res, "error_input_ids"), 3:4)
+})
+
+test_that("request failures are flagged 'Geocoder error', recoverable by the fallback", {
+  local_mocked_bindings(
+    find_address_candidates = function(...) stop("simulated outage"),
+    .package = "arcgisgeocode"
+  )
+  members <- data.frame(Street.Address = c("100 Main St", "", "200 Oak St"),
+                        City = c("Austin", "Austin", "Austin"))
+
+  expect_warning(
+    pts <- GeocodeMembers(members, "Street.Address", "City", verbose = FALSE),
+    "Geocoder error"
+  )
+  expect_equal(pts$geocode_status,
+               c("Geocoder error", "Missing address", "Geocoder error"))
+  expect_true(all(is.na(pts$geo_x)))
+
+  # the census fallback still retries errored rows and can recover them
+  local_mocked_bindings(
+    geocode_census_oneline = function(street, city, verbose = TRUE) {
+      data.frame(x = c(-97.7, NA), y = c(30.2, NA),
+                 matched_address = c("100 MAIN ST, AUSTIN, TX", NA))
+    }
+  )
+  expect_warning(
+    pts2 <- GeocodeMembers(members, "Street.Address", "City",
+                           censusFallback = TRUE, verbose = FALSE),
+    "Geocoder error"
+  )
+  expect_equal(pts2$geocode_status,
+               c("OK", "Missing address", "Geocoder error"))
+  expect_equal(pts2$geo_source, c("Census", NA, NA))
+})

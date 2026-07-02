@@ -141,6 +141,10 @@ unzip_and_read_spatial <- function(zipfile) {
 #' the joined output. Names are resolved per layer, in order of precedence:
 #' an explicit `districtNames` entry, the name on the `districtsList` element,
 #' the file's base name (for path elements), then a positional fallback.
+#' Duplicate names are made unique (with a message), so any number of layers
+#' -- including several files sharing a base name -- keep distinct, predictable
+#' output columns. Layers without a CRS or without any features are rejected
+#' with a clear error; a layer containing no polygons triggers a warning.
 #'
 #' @param districtsList A single sf layer or file path, a character vector of
 #'   file paths, or an (optionally named) list of sf layers and/or file paths
@@ -183,9 +187,9 @@ prepare_district_layers <- function(districtsList, districtNames = NULL) {
     }
   }
 
-  # Every layer needs a CRS to be joined against geocoded (WGS84) points. A
-  # shapefile missing its .prj sidecar is the common way to end up here.
   for (i in seq_along(districtsList)) {
+    # Every layer needs a CRS to be joined against geocoded (WGS84) points. A
+    # shapefile missing its .prj sidecar is the common way to end up here.
     if (is.na(sf::st_crs(districtsList[[i]]))) {
       stop(sprintf(
         paste0("District layer '%s' has no coordinate reference system ",
@@ -194,12 +198,47 @@ prepare_district_layers <- function(districtsList, districtNames = NULL) {
         layer_names[i]
       ))
     }
+    # An empty layer would assign NA everywhere and break the search extent;
+    # it is always a wrong/corrupt upload, so fail loudly and early.
+    if (nrow(districtsList[[i]]) == 0) {
+      stop(sprintf("District layer '%s' contains no features.", layer_names[i]))
+    }
+    # Districts are polygons. Joining points against a point/line layer is
+    # technically possible but would leave (nearly) every member unassigned,
+    # so warn about what is almost certainly a wrong file.
+    geom_types <- as.character(sf::st_geometry_type(districtsList[[i]]))
+    if (!any(geom_types %in% c("POLYGON", "MULTIPOLYGON", "GEOMETRY", "GEOMETRYCOLLECTION"))) {
+      warning(sprintf(
+        "District layer '%s' contains no polygons (geometry: %s); member points are unlikely to fall within it.",
+        layer_names[i], paste(unique(geom_types), collapse = ", ")
+      ), call. = FALSE)
+    }
+  }
+
+  # Column prefixes must be non-empty and unique across layers. With many
+  # layers, duplicate names (two files both named "congress", or names that
+  # sanitize to the same string) would produce colliding output columns that
+  # sf silently renames to ".x"/".y", scrambling downstream lookups. Names
+  # that sanitize to nothing fall back to their position.
+  prefixes <- vapply(layer_names, sanitize_layer_name, character(1), USE.NAMES = FALSE)
+  blank <- !nzchar(prefixes)
+  prefixes[blank] <- paste0("District_", seq_along(prefixes)[blank])
+  layer_names[blank] <- prefixes[blank]
+  deduped <- make.unique(prefixes, sep = "_")
+  changed <- deduped != prefixes
+  if (any(changed)) {
+    message(sprintf(
+      "Duplicate district layer name(s) made unique: %s.",
+      paste(sprintf("'%s' -> '%s'", layer_names[changed], deduped[changed]), collapse = ", ")
+    ))
+    layer_names[changed] <- deduped[changed]
+    prefixes <- deduped
   }
 
   # Ensure valid geometry, then prefix each layer's columns with its name so
   # columns from different layers stay distinct in the joined output.
   districtsList <- lapply(districtsList, repair_geometry)
-  districtsList <- Map(prefix_layer_columns, districtsList, layer_names)
+  districtsList <- Map(prefix_layer_columns, districtsList, prefixes)
 
   # Name the list itself so downstream consumers (e.g. the app's map tab) can
   # refer to layers by display name.
@@ -234,6 +273,10 @@ compute_search_extent <- function(layers, pad = 0.05) {
   ymin <- min(vapply(boxes, function(b) b[["ymin"]], numeric(1)))
   xmax <- max(vapply(boxes, function(b) b[["xmax"]], numeric(1)))
   ymax <- max(vapply(boxes, function(b) b[["ymax"]], numeric(1)))
+
+  if (!all(is.finite(c(xmin, ymin, xmax, ymax)))) {
+    stop("Could not compute a finite search extent from the district layers (does a layer have no features?).")
+  }
 
   # Pad by a fraction of each span so edge addresses still geocode.
   dx <- (xmax - xmin) * pad

@@ -24,9 +24,14 @@ keep_first_match <- function(joined, id_col = "original_row_id", verbose = TRUE)
 #' geocoded points across many layer sets pay preparation only once.
 #'
 #' Every input row is carried through: rows without coordinates become empty
-#' points and simply receive `NA` district columns. Supports any number of
-#' layers; overlapping polygons within a layer resolve to the first match (with
-#' a message) so a point is never duplicated into multiple rows.
+#' points and simply receive `NA` district columns, and a geocoded point that
+#' falls outside every polygon of a layer receives `NA` for that layer.
+#' Supports any number of layers; overlapping polygons within a layer resolve
+#' to the first match (with a message) so a point is never duplicated into
+#' multiple rows. If an input column has the same name as a layer's prefixed
+#' output column (e.g. a re-uploaded previous export still carrying
+#' `Congressional_DISTRICT`), the input copy is renamed with an `_input`
+#' suffix (with a message) so the fresh assignment keeps the expected name.
 #'
 #' @param geocoded Output of [GeocodeMembers()] (all rows, with `geo_x`/`geo_y`
 #'   and `geocode_status`).
@@ -73,6 +78,32 @@ AssignToDistricts <- function(geocoded, layers, removeGEO = TRUE,
     stop("`geocoded$original_row_id` must be unique and non-NA. Pass the output of GeocodeMembers().")
   }
 
+  # Input columns that collide with a layer's (prefixed) output columns --
+  # typically a re-uploaded previous export that still carries assignment
+  # columns like "Congressional_DISTRICT". sf::st_join would silently rename
+  # BOTH sides to ".x"/".y", leaving the fresh assignment under an unexpected
+  # name; instead rename the stale input copy to "<name>_input" so every
+  # fresh assignment lands under its documented column name.
+  layer_attr_cols <- unlist(lapply(layers, function(l) {
+    setdiff(names(l), attr(l, "sf_column"))
+  }))
+  clash <- setdiff(intersect(names(geocoded), layer_attr_cols), required_cols)
+  if (length(clash) > 0) {
+    renamed <- paste0(clash, "_input")
+    # Guard against the renamed name itself already existing in the input.
+    renamed <- utils::tail(
+      make.unique(c(setdiff(names(geocoded), clash), renamed), sep = "_"),
+      length(renamed)
+    )
+    if (verbose) {
+      message(sprintf(
+        "Input column(s) also produced by a district layer were renamed to keep the fresh assignment under its expected name: %s.",
+        paste(sprintf("'%s' -> '%s'", clash, renamed), collapse = ", ")
+      ))
+    }
+    names(geocoded)[match(clash, names(geocoded))] <- renamed
+  }
+
   target_crs <- sf::st_crs(layers[[1]])
 
   # Joins run planar (s2 off) regardless of what was set before, so results
@@ -84,14 +115,25 @@ AssignToDistricts <- function(geocoded, layers, removeGEO = TRUE,
   # FALSE) that a left st_join keeps with NA district columns. remove = FALSE
   # keeps geo_x/geo_y as plain columns too, so they survive into the final
   # (geometry-dropped) result -- the app's map and CSV exports rely on them.
-  member_pts <- geocoded |>
-    sf::st_as_sf(
-      coords = c("geo_x", "geo_y"),
-      crs = sf::st_crs("EPSG:4326"),
-      na.fail = FALSE,
-      remove = FALSE
-    ) |>
-    sf::st_transform(crs = target_crs)
+  # withCallingHandlers: when EVERY row lacks coordinates (a fully failed
+  # geocode run), sf warns "no non-missing arguments to max" while computing
+  # the bbox of all-empty points. That input is valid here (all rows are kept
+  # and get NA districts), so muffle exactly that warning and no other.
+  member_pts <- withCallingHandlers(
+    geocoded |>
+      sf::st_as_sf(
+        coords = c("geo_x", "geo_y"),
+        crs = sf::st_crs("EPSG:4326"),
+        na.fail = FALSE,
+        remove = FALSE
+      ) |>
+      sf::st_transform(crs = target_crs),
+    warning = function(w) {
+      if (grepl("no non-missing arguments to m", conditionMessage(w))) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
 
   # Join each layer in turn, de-duping to first match after each so overlapping
   # polygons can't multiply rows (and can't compound across layers).
@@ -115,15 +157,19 @@ AssignToDistricts <- function(geocoded, layers, removeGEO = TRUE,
   result <- if (isTRUE(removeGEO)) sf::st_drop_geometry(final) else final
 
   # Summary counts come from the geocode_status flags on the (row-complete)
-  # input, so they reflect input rows regardless of join behavior.
+  # input, so they reflect input rows regardless of join behavior. "Failed"
+  # covers both true non-matches and rows whose geocode request errored; the
+  # latter are also counted separately so a service problem is visible.
   invalid_count <- sum(geocoded$geocode_status == "Missing address")
-  failed_count  <- sum(geocoded$geocode_status == "No geocode match")
+  failed_count  <- sum(geocoded$geocode_status %in% c("No geocode match", "Geocoder error"))
+  error_count   <- sum(geocoded$geocode_status == "Geocoder error")
   success_count <- sum(geocoded$geocode_status == "OK")
 
   status_cols <- intersect(c("original_row_id", "Street.Address", "City", "geocode_status"),
                            names(geocoded))
   invalid_rows <- geocoded[geocoded$geocode_status == "Missing address", status_cols]
-  failed_rows  <- geocoded[geocoded$geocode_status == "No geocode match", status_cols]
+  failed_rows  <- geocoded[geocoded$geocode_status %in% c("No geocode match", "Geocoder error"),
+                           status_cols]
 
   attr(result, "summary_stats") <- list(
     original_count = nrow(geocoded),
@@ -131,6 +177,7 @@ AssignToDistricts <- function(geocoded, layers, removeGEO = TRUE,
     invalid_rows = if (invalid_count > 0) invalid_rows else NULL,
     failed_geocoding_count = failed_count,
     failed_geocoding_rows = if (failed_count > 0) failed_rows else NULL,
+    geocoder_error_count = error_count,
     successful_count = success_count
   )
 
@@ -156,14 +203,26 @@ print_summary <- function(result) {
   cat(sprintf("Total addresses: %d\n", stats$original_count))
   cat(sprintf("Invalid addresses (blank/NA): %d\n", stats$invalid_address_count))
   cat(sprintf("Failed geocoding: %d\n", stats$failed_geocoding_count))
+  if (isTRUE(stats$geocoder_error_count > 0)) {
+    cat(sprintf("  of which geocoder request errors (a re-run may fix): %d\n",
+                stats$geocoder_error_count))
+  }
   cat(sprintf("Successfully geocoded: %d\n", stats$successful_count))
 
   if (!is.null(stats$failed_geocoding_rows)) {
     cat("\nFailed addresses:\n")
     fr <- stats$failed_geocoding_rows
-    for (i in seq_len(nrow(fr))) {
-      cat(sprintf("  Row %d: %s, %s\n",
-                  fr$original_row_id[i], fr$Street.Address[i], fr$City[i]))
+    # A large upload can fail hundreds of rows; list the first few and point
+    # at the geocode_status column for the rest instead of flooding the console.
+    n_show <- min(nrow(fr), 10L)
+    for (i in seq_len(n_show)) {
+      cat(sprintf("  Row %d: %s, %s [%s]\n",
+                  fr$original_row_id[i], fr$Street.Address[i], fr$City[i],
+                  fr$geocode_status[i]))
+    }
+    if (nrow(fr) > n_show) {
+      cat(sprintf("  ... and %d more (see the geocode_status column).\n",
+                  nrow(fr) - n_show))
     }
   }
   cat("===============\n\n")

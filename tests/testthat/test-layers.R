@@ -135,3 +135,45 @@ test_that("compute_search_extent unions and pads layer boxes", {
 
   expect_error(compute_search_extent(list()), "At least one district layer")
 })
+
+test_that("duplicate layer names are made unique with distinct prefixes", {
+  expect_message(
+    out <- prepare_district_layers(
+      list(Council = fixture_layer_ns(), Council = fixture_layer_overlap())
+    ),
+    "made unique"
+  )
+  expect_equal(names(out), c("Council", "Council_1"))
+  expect_true("Council_DISTRICT" %in% names(out[[1]]))
+  expect_true("Council_1_ZONE" %in% names(out[[2]]))
+})
+
+test_that("names that sanitize to nothing fall back to a positional prefix", {
+  out <- suppressMessages(
+    prepare_district_layers(list(fixture_layer_ns()), districtNames = "!!!")
+  )
+  expect_equal(names(out), "District_1")
+  expect_true("District_1_DISTRICT" %in% names(out[[1]]))
+})
+
+test_that("empty and non-polygon layers are caught", {
+  expect_error(
+    prepare_district_layers(list(Empty = fixture_layer_ns()[0, ])),
+    "contains no features"
+  )
+
+  pt_layer <- sf::st_sf(
+    ID = 1,
+    geometry = sf::st_sfc(sf::st_point(c(-97.7, 30.2)), crs = 4326)
+  )
+  expect_warning(
+    prepare_district_layers(list(Points = pt_layer)),
+    "contains no polygons"
+  )
+
+  # an empty layer also can't silently produce an infinite search extent
+  expect_error(
+    compute_search_extent(list(fixture_layer_ns()[0, ])),
+    "finite search extent"
+  )
+})

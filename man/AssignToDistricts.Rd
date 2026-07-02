@@ -43,9 +43,14 @@ geocoded points across many layer sets pay preparation only once.
 }
 \details{
 Every input row is carried through: rows without coordinates become empty
-points and simply receive \code{NA} district columns. Supports any number of
-layers; overlapping polygons within a layer resolve to the first match (with
-a message) so a point is never duplicated into multiple rows.
+points and simply receive \code{NA} district columns, and a geocoded point that
+falls outside every polygon of a layer receives \code{NA} for that layer.
+Supports any number of layers; overlapping polygons within a layer resolve
+to the first match (with a message) so a point is never duplicated into
+multiple rows. If an input column has the same name as a layer's prefixed
+output column (e.g. a re-uploaded previous export still carrying
+\code{Congressional_DISTRICT}), the input copy is renamed with an \verb{_input}
+suffix (with a message) so the fresh assignment keeps the expected name.
 }
 \examples{
 \dontrun{
