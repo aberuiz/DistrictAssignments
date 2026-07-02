@@ -15,7 +15,7 @@ points across any number of layer sets via AssignToDistricts().'></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.5</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -56,6 +56,7 @@ points across any number of layer sets via <code><a href="AssignToDistricts.html
 <span>  <span class="va">StreetCol</span>,</span>
 <span>  <span class="va">CityCol</span>,</span>
 <span>  boundaries <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  censusFallback <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  verbose <span class="op">=</span> <span class="cn">TRUE</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -82,6 +83,13 @@ file, of addresses (Excel files require the suggested <code>readxl</code> packag
 geocoding. Default <code>NULL</code> = unrestricted.</p></dd>
 
 
+<dt id="arg-censusfallback">censusFallback<a class="anchor" aria-label="anchor" href="#arg-censusfallback"></a></dt>
+<dd><p>If <code>TRUE</code>, addresses the primary (ArcGIS) geocoder
+fails on are retried against the free US Census Bureau geocoder (US
+addresses only). Recovered rows get coordinates, status <code>"OK"</code>, and
+<code>geo_source = "Census"</code>. Default <code>FALSE</code>.</p></dd>
+
+
 <dt id="arg-verbose">verbose<a class="anchor" aria-label="anchor" href="#arg-verbose"></a></dt>
 <dd><p>Print progress to the console.</p></dd>
 
@@ -99,6 +107,10 @@ geocoding. Default <code>NULL</code> = unrestricted.</p></dd>
 
 <dt>geo_x, geo_y</dt>
 <dd><p>longitude/latitude (<code>NA</code> where not geocoded)</p></dd>
+
+<dt>geo_source</dt>
+<dd><p>which service located the row: <code>"ArcGIS"</code>, <code>"Census"</code>
+(fallback), or <code>NA</code> if not geocoded</p></dd>
 
 <dt>geo_*</dt>
 <dd><p>additional geocoder fields (geo_score, geo_match_addr, ...)</p></dd>

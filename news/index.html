@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.5</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,17 @@
       <small>Source: <a href="https://github.com/aberuiz/DistrictAssignments/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.1.5" id="districtassignments-015">DistrictAssignments 0.1.5<a class="anchor" aria-label="anchor" href="#districtassignments-015"></a></h2>
+<div class="section level3">
+<h3 id="new-features-0-1-5">New features<a class="anchor" aria-label="anchor" href="#new-features-0-1-5"></a></h3>
+<ul><li>Census geocoder fallback: <code><a href="../reference/GeocodeMembers.html">GeocodeMembers()</a></code> and <code><a href="../reference/AssignDistricts.html">AssignDistricts()</a></code> gain a <code>censusFallback</code> argument (default <code>FALSE</code>; the app’s checkbox defaults to on). Addresses the ArcGIS geocoder fails on are retried against the free US Census Bureau geocoder; recovered rows get coordinates, status <code>"OK"</code>, and <code>geo_source = "Census"</code>. A new <code>geo_source</code> column records which service located each row.</li>
+<li>Results map: the app’s main panel is now a Table/Map tabset. The map (built with the suggested <code>leaflet</code> package) shows every district layer’s polygons as toggleable groups labeled with per-district member counts, and plots the geocoded points colored by the assignment of a selectable layer. Points outside every district plot gray; rows without coordinates are counted in a caption. A per-district member count table appears under the map.</li>
+<li>
+<code><a href="../reference/prepare_district_layers.html">prepare_district_layers()</a></code> now names its returned list with the resolved layer names.</li>
+<li>Assigned results now retain the <code>geo_x</code>/<code>geo_y</code> coordinate columns (previously consumed by the spatial join), so exports include coordinates and the map can plot them.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.0" id="districtassignments-010">DistrictAssignments 0.1.0<a class="anchor" aria-label="anchor" href="#districtassignments-010"></a></h2>
 <p>First release as an R package (previously a set of standalone scripts).</p>

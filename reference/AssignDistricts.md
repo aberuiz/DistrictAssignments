@@ -24,6 +24,7 @@ AssignDistricts(
   restrictToDistrictArea = FALSE,
   boundaries = NULL,
   join_type = c("intersects", "within"),
+  censusFallback = FALSE,
   verbose = TRUE
 )
 ```
@@ -78,6 +79,13 @@ AssignDistricts(
   boundary point touching two districts resolves to the first, with a
   message); `"within"` requires the point to be strictly inside, so
   boundary points receive `NA`.
+
+- censusFallback:
+
+  If `TRUE`, addresses the primary (ArcGIS) geocoder fails on are
+  retried against the free US Census Bureau geocoder (US addresses
+  only). Recovered rows get coordinates, status `"OK"`, and
+  `geo_source = "Census"`. Default `FALSE`.
 
 - verbose:
 

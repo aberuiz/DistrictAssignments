@@ -1,5 +1,31 @@
 # Changelog
 
+## DistrictAssignments 0.1.5
+
+### New features
+
+- Census geocoder fallback:
+  [`GeocodeMembers()`](https://aberuiz.github.io/DistrictAssignments/reference/GeocodeMembers.md)
+  and
+  [`AssignDistricts()`](https://aberuiz.github.io/DistrictAssignments/reference/AssignDistricts.md)
+  gain a `censusFallback` argument (default `FALSE`; the app’s checkbox
+  defaults to on). Addresses the ArcGIS geocoder fails on are retried
+  against the free US Census Bureau geocoder; recovered rows get
+  coordinates, status `"OK"`, and `geo_source = "Census"`. A new
+  `geo_source` column records which service located each row.
+- Results map: the app’s main panel is now a Table/Map tabset. The map
+  (built with the suggested `leaflet` package) shows every district
+  layer’s polygons as toggleable groups labeled with per-district member
+  counts, and plots the geocoded points colored by the assignment of a
+  selectable layer. Points outside every district plot gray; rows
+  without coordinates are counted in a caption. A per-district member
+  count table appears under the map.
+- [`prepare_district_layers()`](https://aberuiz.github.io/DistrictAssignments/reference/prepare_district_layers.md)
+  now names its returned list with the resolved layer names.
+- Assigned results now retain the `geo_x`/`geo_y` coordinate columns
+  (previously consumed by the spatial join), so exports include
+  coordinates and the map can plot them.
+
 ## DistrictAssignments 0.1.0
 
 First release as an R package (previously a set of standalone scripts).

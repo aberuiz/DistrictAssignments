@@ -4,9 +4,11 @@ A point-and-click interface over
 [`GeocodeMembers()`](https://aberuiz.github.io/DistrictAssignments/reference/GeocodeMembers.md)
 and
 [`AssignToDistricts()`](https://aberuiz.github.io/DistrictAssignments/reference/AssignToDistricts.md):
-upload a member CSV, geocode it, add any number of zipped district files
-(`.shp` or `.geojson`), and download the assigned results. Requires the
-suggested packages `shiny`, `DT`, and `bslib`.
+upload a member CSV, geocode it, add any number of district files
+(`.gpkg`, `.geojson`, or zipped `.shp`), review the results as a table
+or on a map, and download the assigned results. Requires the suggested
+packages `shiny`, `DT`, and `bslib`; the map tab additionally uses
+`leaflet` (a hint is shown if it isn't installed).
 
 ## Usage
 

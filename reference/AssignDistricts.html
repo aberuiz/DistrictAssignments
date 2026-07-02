@@ -13,7 +13,7 @@ AssignToDistricts() repeatedly instead.'></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.5</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -58,6 +58,7 @@ to many districting files" workflow, call <code><a href="GeocodeMembers.html">Ge
 <span>  restrictToDistrictArea <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  boundaries <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  join_type <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"intersects"</span>, <span class="st">"within"</span><span class="op">)</span>,</span>
+<span>  censusFallback <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  verbose <span class="op">=</span> <span class="cn">TRUE</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -113,6 +114,13 @@ Overrides <code>restrictToDistrictArea</code>. Default <code>NULL</code> = no re
 boundary (a boundary point touching two districts resolves to the first,
 with a message); <code>"within"</code> requires the point to be strictly inside, so
 boundary points receive <code>NA</code>.</p></dd>
+
+
+<dt id="arg-censusfallback">censusFallback<a class="anchor" aria-label="anchor" href="#arg-censusfallback"></a></dt>
+<dd><p>If <code>TRUE</code>, addresses the primary (ArcGIS) geocoder
+fails on are retried against the free US Census Bureau geocoder (US
+addresses only). Recovered rows get coordinates, status <code>"OK"</code>, and
+<code>geo_source = "Census"</code>. Default <code>FALSE</code>.</p></dd>
 
 
 <dt id="arg-verbose">verbose<a class="anchor" aria-label="anchor" href="#arg-verbose"></a></dt>

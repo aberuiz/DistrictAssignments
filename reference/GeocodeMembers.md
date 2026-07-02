@@ -15,6 +15,7 @@ GeocodeMembers(
   StreetCol,
   CityCol,
   boundaries = NULL,
+  censusFallback = FALSE,
   verbose = TRUE
 )
 ```
@@ -40,6 +41,13 @@ GeocodeMembers(
   [`compute_search_extent()`](https://aberuiz.github.io/DistrictAssignments/reference/compute_search_extent.md))
   to restrict geocoding. Default `NULL` = unrestricted.
 
+- censusFallback:
+
+  If `TRUE`, addresses the primary (ArcGIS) geocoder fails on are
+  retried against the free US Census Bureau geocoder (US addresses
+  only). Recovered rows get coordinates, status `"OK"`, and
+  `geo_source = "Census"`. Default `FALSE`.
+
 - verbose:
 
   Print progress to the console.
@@ -63,6 +71,11 @@ The member data.frame with these columns added/replaced:
 - geo_x, geo_y:
 
   longitude/latitude (`NA` where not geocoded)
+
+- geo_source:
+
+  which service located the row: `"ArcGIS"`, `"Census"` (fallback), or
+  `NA` if not geocoded
 
 - geo\_\*:
 
