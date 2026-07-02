@@ -67,10 +67,19 @@ run_app()
     give them a second look. Nothing is dropped — every input row appears in
     the output.
 
+    The **Map tab** (requires the suggested `leaflet` package) shows the same
+    results on a map: district polygons labeled with per-district member
+    counts, points colored by the assignment of the layer you pick, gray
+    points for addresses outside every district, and a count table underneath.
+
 7.  **Download.** Select the columns you want and export to `.csv`.
 
 Additional options:
 
+-   **Retry failed geocodes with the US Census geocoder** (default on) gives
+    addresses the ArcGIS geocoder can't find a second chance against the free
+    US Census Bureau geocoder (US addresses only). Recovered rows are marked
+    `geo_source = "Census"`.
 -   **Remove Geometry Column** (default on) drops the spatial geometry from the
     output for a clean CSV export.
 -   **Restrict geocoding to district area** (default off) limits geocoding to the
@@ -148,8 +157,10 @@ as an attribute; `print_summary(result)` writes them to the console.
     note.
 -   Geocoding uses the R package
     [`arcgisgeocode`](https://github.com/R-ArcGIS/arcgisgeocode) (ArcGIS World
-    Geocoder). Only the street address and city are sent to the geocoding
-    service; all other columns are processed locally.
+    Geocoder), optionally falling back to the US Census Bureau geocoder for
+    failed addresses (`censusFallback = TRUE`; US only). Only the street
+    address and city are sent to the geocoding service(s); all other columns
+    are processed locally.
 -   By default geocoding is not restricted to any area. Enabling the restriction
     uses the (padded) combined extent of all uploaded district layers.
 -   Spatial joins are planar (s2 disabled), which is the appropriate model for

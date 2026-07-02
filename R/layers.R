@@ -201,6 +201,9 @@ prepare_district_layers <- function(districtsList, districtNames = NULL) {
   districtsList <- lapply(districtsList, repair_geometry)
   districtsList <- Map(prefix_layer_columns, districtsList, layer_names)
 
+  # Name the list itself so downstream consumers (e.g. the app's map tab) can
+  # refer to layers by display name.
+  names(districtsList) <- layer_names
   districtsList
 }
 

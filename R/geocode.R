@@ -1,5 +1,47 @@
 # Geocoding a member list.
 
+# Fallback geocoder: the US Census Bureau's free onelineaddress endpoint.
+# Sequential single requests -- this only ever runs on the (typically few) rows
+# the primary geocoder failed on, so batch plumbing isn't worth its complexity.
+# Returns one row per input with x/y/matched_address, NA where no match; a
+# request error just leaves its row NA (the row simply stays failed).
+geocode_census_oneline <- function(street, city, verbose = TRUE) {
+  out <- data.frame(
+    x = rep(NA_real_, length(street)),
+    y = NA_real_,
+    matched_address = NA_character_
+  )
+  base_req <- httr2::request("https://geocoding.geo.census.gov/geocoder/locations/onelineaddress") |>
+    httr2::req_user_agent("DistrictAssignments R package (https://github.com/aberuiz/DistrictAssignments)") |>
+    httr2::req_timeout(30)
+
+  for (i in seq_along(street)) {
+    tryCatch({
+      resp <- base_req |>
+        httr2::req_url_query(
+          address = paste(street[i], city[i], sep = ", "),
+          benchmark = "Public_AR_Current",
+          format = "json"
+        ) |>
+        httr2::req_perform()
+      body <- yyjsonr::read_json_str(httr2::resp_body_string(resp))
+      # yyjsonr simplifies the addressMatches array of objects into a
+      # data.frame (one row per candidate) whose `coordinates` field is a
+      # list-column; an empty array comes back as a zero-length list.
+      matches <- body$result$addressMatches
+      if (is.data.frame(matches) && nrow(matches) > 0) {
+        coords <- matches$coordinates[[1]]
+        out$x[i] <- as.numeric(coords$x)
+        out$y[i] <- as.numeric(coords$y)
+        out$matched_address[i] <- as.character(matches$matchedAddress[1])
+      }
+    }, error = function(e) {
+      if (verbose) cat(sprintf("Census fallback request failed for row %d: %s\n", i, conditionMessage(e)))
+    })
+  }
+  out
+}
+
 # Read a member list from disk: .csv natively, .xlsx/.xls via the suggested
 # readxl package. Returns a plain data.frame either way.
 read_member_file <- function(path) {
@@ -34,6 +76,10 @@ read_member_file <- function(path) {
 #' @param CityCol Name of the city column.
 #' @param boundaries Optional bbox (see [compute_search_extent()]) to restrict
 #'   geocoding. Default `NULL` = unrestricted.
+#' @param censusFallback If `TRUE`, addresses the primary (ArcGIS) geocoder
+#'   fails on are retried against the free US Census Bureau geocoder (US
+#'   addresses only). Recovered rows get coordinates, status `"OK"`, and
+#'   `geo_source = "Census"`. Default `FALSE`.
 #' @param verbose Print progress to the console.
 #'
 #' @return The member data.frame with these columns added/replaced:
@@ -42,6 +88,8 @@ read_member_file <- function(path) {
 #'   \item{Street.Address, City}{the resolved address/city used for geocoding}
 #'   \item{geocode_status}{`"OK"`, `"Missing address"`, or `"No geocode match"`}
 #'   \item{geo_x, geo_y}{longitude/latitude (`NA` where not geocoded)}
+#'   \item{geo_source}{which service located the row: `"ArcGIS"`, `"Census"`
+#'     (fallback), or `NA` if not geocoded}
 #'   \item{geo_*}{additional geocoder fields (geo_score, geo_match_addr, ...)}
 #' }
 #'
@@ -50,7 +98,8 @@ read_member_file <- function(path) {
 #' pts <- GeocodeMembers("members.csv", "Street.Address", "City")
 #' }
 #' @export
-GeocodeMembers <- function(memberList, StreetCol, CityCol, boundaries = NULL, verbose = TRUE) {
+GeocodeMembers <- function(memberList, StreetCol, CityCol, boundaries = NULL,
+                           censusFallback = FALSE, verbose = TRUE) {
   if (is.character(memberList) && length(memberList) == 1) {
     memberList <- read_member_file(memberList)
   }
@@ -172,6 +221,32 @@ GeocodeMembers <- function(memberList, StreetCol, CityCol, boundaries = NULL, ve
   # Flag address-valid rows that still failed to geocode (no candidate returned).
   failed_geo <- valid_addresses & (is.na(memberList$geo_x) | is.na(memberList$geo_y))
   memberList$geocode_status[failed_geo] <- "No geocode match"
+
+  # Which service located each row (NA where not geocoded). Set from the
+  # primary pass first; the fallback below overwrites its recovered rows.
+  memberList$geo_source <- ifelse(memberList$geocode_status == "OK", "ArcGIS", NA_character_)
+
+  # Optional second chance: retry the failed rows against the US Census
+  # geocoder. Keyed by row index, so alignment works exactly like the primary
+  # pass; rows the fallback also misses simply stay "No geocode match".
+  if (isTRUE(censusFallback) && any(failed_geo)) {
+    idx <- which(failed_geo)
+    if (verbose) cat(sprintf("Retrying %d failed address(es) with the Census geocoder...\n", length(idx)))
+
+    cen <- geocode_census_oneline(memberList$Street.Address[idx],
+                                  memberList$City[idx], verbose = verbose)
+    got <- !is.na(cen$x) & !is.na(cen$y)
+    rows <- idx[got]
+    if (length(rows) > 0) {
+      memberList$geo_x[rows] <- cen$x[got]
+      memberList$geo_y[rows] <- cen$y[got]
+      if (is.null(memberList$geo_match_addr)) memberList$geo_match_addr <- NA_character_
+      memberList$geo_match_addr[rows] <- cen$matched_address[got]
+      memberList$geo_source[rows] <- "Census"
+      memberList$geocode_status[rows] <- "OK"
+    }
+    if (verbose) cat(sprintf("Census fallback recovered %d address(es).\n", length(rows)))
+  }
 
   if (verbose) {
     cat(paste("Number of geocoded addresses:",

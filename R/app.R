@@ -6,8 +6,10 @@
 #'
 #' A point-and-click interface over [GeocodeMembers()] and
 #' [AssignToDistricts()]: upload a member CSV, geocode it, add any number of
-#' zipped district files (`.shp` or `.geojson`), and download the assigned
-#' results. Requires the suggested packages `shiny`, `DT`, and `bslib`.
+#' district files (`.gpkg`, `.geojson`, or zipped `.shp`), review the results
+#' as a table or on a map, and download the assigned results. Requires the
+#' suggested packages `shiny`, `DT`, and `bslib`; the map tab additionally
+#' uses `leaflet` (a hint is shown if it isn't installed).
 #'
 #' @param max_upload_mb Maximum upload size in megabytes (default 20).
 #' @param ... Passed on to [shiny::runApp()] (e.g. `port`, `launch.browser`).
@@ -56,6 +58,8 @@ app_ui <- function() {
         shiny::uiOutput("clearDistrictsUI"),
         shiny::checkboxInput("removeGEO", "Remove Geometry Column", value = TRUE),
         shiny::checkboxInput("restrictGeo", "Restrict geocoding to district area", value = FALSE),
+        shiny::checkboxInput("censusFallback",
+                             "Retry failed geocodes with the US Census geocoder", value = TRUE),
         shiny::actionButton("run", "Assign Districts"),
         shiny::actionButton("regeocode", "Clear geocode cache"),
         shiny::helpText("Clear the cache to force a fresh geocode."),
@@ -64,31 +68,13 @@ app_ui <- function() {
         shiny::downloadButton("downloadData", "Download Selected Columns")
       ),
       shiny::mainPanel(
-        # FUTURE (results map): swap this for a tabsetPanel with a "Table" tab
-        # (this DTOutput) and a "Map" tab -- an in-app tab, not a separate
-        # browser window, so it needs no extra server or link plumbing.
-        #
-        # Map tab contents:
-        #   - leaflet::leafletOutput("map") + one selectInput("mapLayer") that
-        #     picks WHICH district layer drives the point colors. Rendering is
-        #     lazy: leaflet only draws when the tab is opened.
-        #   - Per-layer polygon groups via addPolygons(group = layer_name) and
-        #     addLayersControl(overlayGroups = ...) give the built-in checkbox
-        #     UI for switching layers on/off -- no custom code needed.
-        #   - Per-district counts are one table() call on the layer's
-        #     assignment column; show them as polygon labels/popups
-        #     ("District 5 -- 123 members") and optionally a small summary
-        #     table under the map. Counts come from the SAME results object the
-        #     table shows, so they can never disagree.
-        #   - Points: addCircleMarkers(lng = ~geo_x, lat = ~geo_y) colored by
-        #     the selected layer's assignment; rows with NA coordinates can't
-        #     be plotted, so list them in a caption ("4 rows not shown: ...").
-        #   - Needs the geometry/coords: results already keep geo_x/geo_y even
-        #     when removeGEO = TRUE, so no pipeline change is required.
-        # Complexity containment: one tab + one dropdown, read-only (no
-        # map-driven filtering/editing), leaflet in Suggests gated by
-        # requireNamespace like DT/bslib. The base app gains no dependencies.
-        DT::DTOutput("results")
+        shiny::tabsetPanel(
+          shiny::tabPanel("Table", DT::DTOutput("results")),
+          # Read-only results map (requires the suggested leaflet package):
+          # polygons per layer as toggleable groups, points colored by the
+          # selected layer's assignment, per-district member counts.
+          shiny::tabPanel("Map", shiny::uiOutput("mapUI"))
+        )
       )
     ),
     theme = bslib::bs_theme(version = 5, bootswatch = "minty")
@@ -99,6 +85,17 @@ app_server <- function(input, output, session) {
 
   csvData <- shiny::reactiveVal(NULL)
   results <- shiny::reactiveVal(NULL)
+
+  # The prepared (named) layers the current results were assigned against;
+  # set together with results() so the map can never show polygons from a
+  # different run than the points.
+  assignedLayers <- shiny::reactiveVal(NULL)
+
+  # First attribute (non-geometry) column of a prepared layer: its columns are
+  # already name-prefixed, so this is the column of the same name in results.
+  first_attr <- function(layer) {
+    setdiff(names(layer), attr(layer, "sf_column"))[1]
+  }
 
   # Accumulated district files. A single fileInput only keeps the most recent
   # selection, so we copy each upload to a stable per-session directory and
@@ -203,14 +200,16 @@ app_server <- function(input, output, session) {
     key <- list(
       street = memberList[[streetCol]],
       city   = memberList[[cityCol]],
-      bbox   = bbox_signature(boundaries)
+      bbox   = bbox_signature(boundaries),
+      census = isTRUE(input$censusFallback)
     )
     if (!is.null(geocodedData()) && identical(key, geocodeKey())) {
       shiny::showNotification("Reusing existing geocoding.", type = "message", duration = 2)
       return(geocodedData())
     }
     if (!is.null(progress)) progress$set(message = "Geocoding addresses...", value = 0.3)
-    geocoded <- GeocodeMembers(memberList, streetCol, cityCol, boundaries = boundaries)
+    geocoded <- GeocodeMembers(memberList, streetCol, cityCol, boundaries = boundaries,
+                               censusFallback = isTRUE(input$censusFallback))
     geocodedData(geocoded)
     geocodeKey(key)
     geocoded
@@ -265,8 +264,13 @@ app_server <- function(input, output, session) {
     n_ok      <- sum(g$geocode_status == "OK")
     n_fail    <- sum(g$geocode_status == "No geocode match")
     n_missing <- sum(g$geocode_status == "Missing address")
-    sprintf("Geocoded %d of %d addresses (%d no match, %d missing address).",
-            n_ok, nrow(g), n_fail, n_missing)
+    n_census  <- if (is.null(g$geo_source)) 0 else sum(g$geo_source == "Census", na.rm = TRUE)
+    msg <- sprintf("Geocoded %d of %d addresses (%d no match, %d missing address).",
+                   n_ok, nrow(g), n_fail, n_missing)
+    if (n_census > 0) {
+      msg <- paste0(msg, sprintf(" %d recovered by the Census fallback.", n_census))
+    }
+    msg
   })
 
   shiny::observeEvent(input$memberList, {
@@ -380,6 +384,7 @@ app_server <- function(input, output, session) {
       progress$set(message = "Complete!", value = 1)
 
       results(result)
+      assignedLayers(layers)
 
       # Extract and display summary statistics
       stats <- attr(result, "summary_stats")
@@ -451,6 +456,118 @@ app_server <- function(input, output, session) {
       DT::datatable(data.frame(Message = "No valid results to display"))
     }
   })
+
+  # ---- Results map ---------------------------------------------------------
+
+  output$mapUI <- shiny::renderUI({
+    if (!requireNamespace("leaflet", quietly = TRUE)) {
+      return(shiny::helpText(
+        'Install the "leaflet" package to see the results map: install.packages("leaflet")'
+      ))
+    }
+    if (is.null(results()) || is.null(assignedLayers())) {
+      return(shiny::helpText("Run Assign Districts to see the results on a map."))
+    }
+    shiny::tagList(
+      shiny::selectInput("mapLayer", "Color points by district layer:",
+                         choices = names(assignedLayers())),
+      leaflet::leafletOutput("map", height = 550),
+      shiny::textOutput("mapCaption"),
+      shiny::tableOutput("mapCounts")
+    )
+  })
+
+  # Registered only when leaflet is installed; without it the map tab shows
+  # the install hint from mapUI instead.
+  if (requireNamespace("leaflet", quietly = TRUE)) output$map <- leaflet::renderLeaflet({
+    shiny::req(results(), assignedLayers(), input$mapLayer)
+    layers <- assignedLayers()
+    shiny::req(input$mapLayer %in% names(layers))
+    res <- results()
+    if (inherits(res, "sf")) res <- sf::st_drop_geometry(res)
+
+    m <- leaflet::leaflet() |> leaflet::addTiles()
+
+    # All layers' polygons, one toggleable group per layer, labeled with the
+    # per-district member count (computed from the same results the table
+    # shows, so the numbers can never disagree).
+    for (nm in names(layers)) {
+      l4326 <- sf::st_transform(layers[[nm]], 4326)
+      col <- first_attr(l4326)
+      label <- if (!is.na(col) && col %in% names(res)) {
+        counts <- table(res[[col]])
+        v <- as.character(l4326[[col]])
+        n <- as.integer(counts[v])
+        n[is.na(n)] <- 0L
+        sprintf("%s: %s \u2014 %d member%s", nm, v, n, ifelse(n == 1, "", "s"))
+      } else {
+        rep(nm, nrow(l4326))
+      }
+      m <- leaflet::addPolygons(m, data = l4326, group = nm,
+                                weight = 1.5, fillOpacity = 0.15, label = label)
+    }
+
+    # Points, colored by the selected layer's assignment; geocoded rows that
+    # fall outside every district plot gray.
+    pts <- res[!is.na(res$geo_x) & !is.na(res$geo_y), , drop = FALSE]
+    if (nrow(pts) > 0) {
+      sel_col <- first_attr(layers[[input$mapLayer]])
+      addr <- htmltools::htmlEscape(paste0(pts$Street.Address, ", ", pts$City))
+      if (!is.na(sel_col) && sel_col %in% names(pts)) {
+        vals <- as.character(pts[[sel_col]])
+        pal <- leaflet::colorFactor("viridis", domain = sort(unique(stats::na.omit(vals))))
+        point_color <- ifelse(is.na(vals), "#888888", pal(vals))
+        popup <- paste0(addr, "<br>", htmltools::htmlEscape(input$mapLayer), ": ",
+                        htmltools::htmlEscape(ifelse(is.na(vals), "unassigned", vals)))
+      } else {
+        point_color <- "#3388ff"
+        popup <- addr
+      }
+      m <- leaflet::addCircleMarkers(m, lng = pts$geo_x, lat = pts$geo_y,
+                                     radius = 5, weight = 1, fillOpacity = 0.85,
+                                     color = point_color, popup = popup)
+    }
+
+    m <- leaflet::addLayersControl(
+      m, overlayGroups = names(layers),
+      options = leaflet::layersControlOptions(collapsed = FALSE)
+    )
+    # Start with only the selected layer's polygons visible; the control lets
+    # the user toggle the rest on.
+    for (nm in setdiff(names(layers), input$mapLayer)) {
+      m <- leaflet::hideGroup(m, nm)
+    }
+    m
+  })
+
+  output$mapCaption <- shiny::renderText({
+    shiny::req(results())
+    res <- results()
+    n_missing <- sum(is.na(res$geo_x) | is.na(res$geo_y))
+    sprintf("%d of %d rows plotted. %d row%s without coordinates not shown.",
+            nrow(res) - n_missing, nrow(res),
+            n_missing, if (n_missing == 1) "" else "s")
+  })
+
+  output$mapCounts <- shiny::renderTable({
+    shiny::req(results(), assignedLayers(), input$mapLayer)
+    layers <- assignedLayers()
+    shiny::req(input$mapLayer %in% names(layers))
+    col <- first_attr(layers[[input$mapLayer]])
+    res <- results()
+    shiny::req(!is.na(col), col %in% names(res))
+
+    counts <- table(res[[col]], useNA = "no")
+    df <- data.frame(District = names(counts), Members = as.integer(counts))
+    n_unassigned <- sum(!is.na(res$geo_x) & !is.na(res$geo_y) & is.na(res[[col]]))
+    if (n_unassigned > 0) {
+      df <- rbind(df, data.frame(District = "(geocoded, outside all districts)",
+                                 Members = n_unassigned))
+    }
+    df
+  })
+
+  # ---- Download ------------------------------------------------------------
 
   availableColumns <- shiny::reactiveVal(NULL)
 

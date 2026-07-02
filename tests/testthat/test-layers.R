@@ -47,6 +47,14 @@ test_that("prepare_district_layers accepts sf, named lists, and character vector
   expect_true(paste0(prefix, "_DISTRICT") %in% names(out[[1]]))
 })
 
+test_that("prepare_district_layers returns a list named by layer", {
+  out <- prepare_district_layers(
+    list(fixture_layer_ns(), fixture_layer_overlap()),
+    districtNames = c("Council", "Zones")
+  )
+  expect_equal(names(out), c("Council", "Zones"))
+})
+
 test_that("prepare_district_layers rejects a layer with no CRS", {
   no_crs <- sf::st_sf(DISTRICT = "D1", geometry = sf::st_sfc(mk_poly(-98, 30, -97.5, 30.6)))
   expect_error(

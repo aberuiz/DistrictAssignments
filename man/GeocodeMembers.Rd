@@ -9,6 +9,7 @@ GeocodeMembers(
   StreetCol,
   CityCol,
   boundaries = NULL,
+  censusFallback = FALSE,
   verbose = TRUE
 )
 }
@@ -23,6 +24,11 @@ file, of addresses (Excel files require the suggested \code{readxl} package).}
 \item{boundaries}{Optional bbox (see \code{\link[=compute_search_extent]{compute_search_extent()}}) to restrict
 geocoding. Default \code{NULL} = unrestricted.}
 
+\item{censusFallback}{If \code{TRUE}, addresses the primary (ArcGIS) geocoder
+fails on are retried against the free US Census Bureau geocoder (US
+addresses only). Recovered rows get coordinates, status \code{"OK"}, and
+\code{geo_source = "Census"}. Default \code{FALSE}.}
+
 \item{verbose}{Print progress to the console.}
 }
 \value{
@@ -32,6 +38,8 @@ The member data.frame with these columns added/replaced:
 \item{Street.Address, City}{the resolved address/city used for geocoding}
 \item{geocode_status}{\code{"OK"}, \code{"Missing address"}, or \code{"No geocode match"}}
 \item{geo_x, geo_y}{longitude/latitude (\code{NA} where not geocoded)}
+\item{geo_source}{which service located the row: \code{"ArcGIS"}, \code{"Census"}
+(fallback), or \code{NA} if not geocoded}
 \item{geo_*}{additional geocoder fields (geo_score, geo_match_addr, ...)}
 }
 }

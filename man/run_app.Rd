@@ -17,8 +17,10 @@ Runs the app; does not return while the app is live.
 \description{
 A point-and-click interface over \code{\link[=GeocodeMembers]{GeocodeMembers()}} and
 \code{\link[=AssignToDistricts]{AssignToDistricts()}}: upload a member CSV, geocode it, add any number of
-zipped district files (\code{.shp} or \code{.geojson}), and download the assigned
-results. Requires the suggested packages \code{shiny}, \code{DT}, and \code{bslib}.
+district files (\code{.gpkg}, \code{.geojson}, or zipped \code{.shp}), review the results
+as a table or on a map, and download the assigned results. Requires the
+suggested packages \code{shiny}, \code{DT}, and \code{bslib}; the map tab additionally
+uses \code{leaflet} (a hint is shown if it isn't installed).
 }
 \examples{
 \dontrun{

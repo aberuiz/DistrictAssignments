@@ -14,6 +14,7 @@ AssignDistricts(
   restrictToDistrictArea = FALSE,
   boundaries = NULL,
   join_type = c("intersects", "within"),
+  censusFallback = FALSE,
   verbose = TRUE
 )
 }
@@ -48,6 +49,11 @@ Overrides \code{restrictToDistrictArea}. Default \code{NULL} = no restriction.}
 boundary (a boundary point touching two districts resolves to the first,
 with a message); \code{"within"} requires the point to be strictly inside, so
 boundary points receive \code{NA}.}
+
+\item{censusFallback}{If \code{TRUE}, addresses the primary (ArcGIS) geocoder
+fails on are retried against the free US Census Bureau geocoder (US
+addresses only). Recovered rows get coordinates, status \code{"OK"}, and
+\code{geo_source = "Census"}. Default \code{FALSE}.}
 
 \item{verbose}{Print progress and a summary to the console.}
 }

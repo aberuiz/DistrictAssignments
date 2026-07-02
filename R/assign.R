@@ -81,12 +81,15 @@ AssignToDistricts <- function(geocoded, layers, removeGEO = TRUE,
   on.exit(suppressMessages(sf::sf_use_s2(old_s2)))
 
   # Turn EVERY row into a point; NA coordinates become empty points (na.fail =
-  # FALSE) that a left st_join keeps with NA district columns.
+  # FALSE) that a left st_join keeps with NA district columns. remove = FALSE
+  # keeps geo_x/geo_y as plain columns too, so they survive into the final
+  # (geometry-dropped) result -- the app's map and CSV exports rely on them.
   member_pts <- geocoded |>
     sf::st_as_sf(
       coords = c("geo_x", "geo_y"),
       crs = sf::st_crs("EPSG:4326"),
-      na.fail = FALSE
+      na.fail = FALSE,
+      remove = FALSE
     ) |>
     sf::st_transform(crs = target_crs)
 
@@ -203,7 +206,7 @@ AssignDistricts <- function(memberList, StreetCol = "Street.Address", CityCol = 
                             districtsList, removeGEO = TRUE, districtNames = NULL,
                             restrictToDistrictArea = FALSE, boundaries = NULL,
                             join_type = c("intersects", "within"),
-                            verbose = TRUE) {
+                            censusFallback = FALSE, verbose = TRUE) {
   layers <- prepare_district_layers(districtsList, districtNames)
 
   # Geocoding is unrestricted by default; only build a search extent when the
@@ -212,7 +215,8 @@ AssignDistricts <- function(memberList, StreetCol = "Street.Address", CityCol = 
     boundaries <- compute_search_extent(layers)
   }
 
-  geocoded <- GeocodeMembers(memberList, StreetCol, CityCol, boundaries, verbose = verbose)
+  geocoded <- GeocodeMembers(memberList, StreetCol, CityCol, boundaries,
+                             censusFallback = censusFallback, verbose = verbose)
   result <- AssignToDistricts(geocoded, layers, removeGEO = removeGEO,
                               join_type = join_type, verbose = verbose)
 

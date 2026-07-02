@@ -59,6 +59,53 @@ test_that("member lists can be read from Excel files", {
   expect_equal(pts$geocode_status, rep("Missing address", 2))
 })
 
+test_that("census fallback fills recovered rows and sets geo_source (mocked)", {
+  # Primary geocoder finds nothing; Census recovers the first row only.
+  local_mocked_bindings(
+    find_address_candidates = function(...) {
+      data.frame(input_id = integer(0), x = numeric(0), y = numeric(0))
+    },
+    .package = "arcgisgeocode"
+  )
+  local_mocked_bindings(
+    geocode_census_oneline = function(street, city, verbose = TRUE) {
+      data.frame(x = c(-97.7, NA), y = c(30.2, NA),
+                 matched_address = c("100 MAIN ST, AUSTIN, TX", NA))
+    }
+  )
+
+  members <- data.frame(Street.Address = c("100 Main St", "999 Void Rd"),
+                        City = c("Austin", "Austin"))
+  pts <- GeocodeMembers(members, "Street.Address", "City",
+                        censusFallback = TRUE, verbose = FALSE)
+
+  expect_equal(pts$geocode_status, c("OK", "No geocode match"))
+  expect_equal(pts$geo_source, c("Census", NA))
+  expect_equal(pts$geo_x, c(-97.7, NA))
+  expect_equal(pts$geo_match_addr, c("100 MAIN ST, AUSTIN, TX", NA))
+
+  # without the fallback, both rows stay failed
+  pts2 <- GeocodeMembers(members, "Street.Address", "City", verbose = FALSE)
+  expect_equal(pts2$geocode_status, rep("No geocode match", 2))
+  expect_true(all(is.na(pts2$geo_source)))
+})
+
+test_that("census fallback recovers rows the primary geocoder missed", {
+  skip_if_not_installed("curl")
+  skip_if_offline("geocoding.geo.census.gov")
+
+  # Call the fallback helper directly: one findable address, one hopeless one.
+  cen <- geocode_census_oneline(
+    c("100 Congress Ave", "zzzzqqqq nonexistent 99999 xx"),
+    c("Austin", "Qqzzville"),
+    verbose = FALSE
+  )
+  expect_equal(nrow(cen), 2)
+  expect_true(abs(cen$x[1] - (-97.74)) < 0.1)
+  expect_true(abs(cen$y[1] - 30.26) < 0.1)
+  expect_true(is.na(cen$x[2]))
+})
+
 test_that("live geocoding aligns results to their source rows", {
   skip_if_not_installed("curl")
   skip_if_offline("geocode.arcgis.com")
