@@ -9,7 +9,7 @@ they are ready to hand to AssignToDistricts()."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.5</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.6</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -73,7 +73,11 @@ reference system, and name-prefixed attribute columns.</p>
 <code>Congressional_DISTRICT</code>) so columns from different layers stay distinct in
 the joined output. Names are resolved per layer, in order of precedence:
 an explicit <code>districtNames</code> entry, the name on the <code>districtsList</code> element,
-the file's base name (for path elements), then a positional fallback.</p>
+the file's base name (for path elements), then a positional fallback.
+Duplicate names are made unique (with a message), so any number of layers
+– including several files sharing a base name – keep distinct, predictable
+output columns. Layers without a CRS or without any features are rejected
+with a clear error; a layer containing no polygons triggers a warning.</p>
     </div>
 
     <div class="section level2">

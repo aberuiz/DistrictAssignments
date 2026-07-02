@@ -22,7 +22,7 @@
 
     <a class="navbar-brand me-2" href="index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.5</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.6</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -83,7 +83,7 @@
 <li><p><strong>Add district files.</strong> Upload district geometry as <code>.gpkg</code> or <code>.geojson</code> files directly, or as <code>.zip</code> archives (required for <code>.shp</code>, which needs its sidecar files). The button adds files to a list, so you can keep adding as many as you like. Give each one a name — the name becomes the prefix on that layer’s output columns (e.g. a layer named <code>Congressional</code> turns a <code>DISTRICT</code> column into <code>Congressional_DISTRICT</code>), which keeps columns from different layers distinct.</p></li>
 <li><p><strong>Assign Districts.</strong> Assigns each geocoded address to the district(s) it falls within, across all uploaded layers. This reuses the cached geocoding, so it only runs the (fast) spatial joins.</p></li>
 <li>
-<p><strong>Review the results.</strong> A preview table appears. Rows that couldn’t be geocoded are <strong>highlighted red</strong> and carry a <code>geocode_status</code> of <code>Missing address</code> (blank/NA address) or <code>No geocode match</code> (address not found). Geocodes with a low match score (<code>geo_score</code> below 85) are <strong>highlighted amber</strong> — they matched, but possibly to the wrong place, so give them a second look. Nothing is dropped — every input row appears in the output.</p>
+<p><strong>Review the results.</strong> A preview table appears. Rows that couldn’t be geocoded are <strong>highlighted red</strong> and carry a <code>geocode_status</code> of <code>Missing address</code> (blank/NA address), <code>No geocode match</code> (address not found), or <code>Geocoder error</code> (the geocoding request failed — e.g. a network hiccup — so clearing the geocode cache and re-running may fix it). Geocodes with a low match score (<code>geo_score</code> below 85) are <strong>highlighted amber</strong> — they matched, but possibly to the wrong place, so give them a second look. Nothing is dropped — every input row appears in the output.</p>
 <p>The <strong>Map tab</strong> (requires the suggested <code>leaflet</code> package) shows the same results on a map: district polygons labeled with per-district member counts, points colored by the assignment of the layer you pick, gray points for addresses outside every district, and a count table underneath.</p>
 </li>
 <li><p><strong>Download.</strong> Select the columns you want and export to <code>.csv</code>.</p></li>
@@ -141,9 +141,15 @@
 </h2>
 <ul>
 <li>
-<strong>Every input row is kept.</strong> Rows that can’t be geocoded are flagged, not removed, via <code>geocode_status</code> (<code>OK</code> / <code>Missing address</code> / <code>No geocode match</code>).</li>
+<strong>Every input row is kept.</strong> Rows that can’t be geocoded are flagged, not removed, via <code>geocode_status</code> (<code>OK</code> / <code>Missing address</code> / <code>No geocode match</code> / <code>Geocoder error</code>).</li>
 <li>
 <strong>Rows stay matched.</strong> Geocoding results are aligned to their exact source row, so a blank or unmatched address never shifts the other rows.</li>
+<li>
+<strong>Points outside every district stay blank.</strong> A geocoded address that doesn’t fall inside any polygon of a layer simply gets <code>NA</code> for that layer’s columns (and plots gray on the app’s map).</li>
+<li>
+<strong>Large lists are geocoded in chunks</strong> (500 addresses per request batch), so a transient service failure only affects its own chunk: those rows are flagged <code>Geocoder error</code> (retryable — and the census fallback still gets a chance at them) instead of the whole run aborting.</li>
+<li>
+<strong>Layer names are made unique.</strong> Any number of district layers can be used at once; duplicate names (e.g. two files both named <code>congress</code>) are disambiguated (<code>congress</code>, <code>congress_1</code>) so every layer keeps distinct, predictable output columns. If an input column already has the same name as a layer’s output column (say, a re-uploaded export carrying <code>Congressional_DISTRICT</code>), the input copy is renamed with an <code>_input</code> suffix and the fresh assignment keeps the expected name.</li>
 <li>
 <strong>Overlapping polygons</strong> are resolved to the first matching district per layer (with a note), so a point is never duplicated into multiple rows.</li>
 <li>

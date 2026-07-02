@@ -15,7 +15,7 @@ points across any number of layer sets via AssignToDistricts().'></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.5</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.6</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -103,7 +103,10 @@ addresses only). Recovered rows get coordinates, status <code>"OK"</code>, and
 <dd><p>the resolved address/city used for geocoding</p></dd>
 
 <dt>geocode_status</dt>
-<dd><p><code>"OK"</code>, <code>"Missing address"</code>, or <code>"No geocode match"</code></p></dd>
+<dd><p><code>"OK"</code>, <code>"Missing address"</code> (blank street/city),
+<code>"No geocode match"</code> (the geocoder found no candidate), or
+<code>"Geocoder error"</code> (the request failed – e.g. a network/service
+problem – so the address was never actually tried)</p></dd>
 
 <dt>geo_x, geo_y</dt>
 <dd><p>longitude/latitude (<code>NA</code> where not geocoded)</p></dd>
@@ -124,6 +127,12 @@ addresses only). Recovered rows get coordinates, status <code>"OK"</code>, and
 already contains them (e.g. a re-uploaded previous export), they are
 replaced with freshly computed values so stale results can never leak into
 a new run.</p>
+<p>The address and city columns are coerced to character (so a column read as
+numeric still geocodes), and requests are sent in chunks of 500 so that on
+large lists a transient service failure only affects its own chunk: those
+rows are flagged <code>"Geocoder error"</code> (with a warning naming the row range)
+instead of aborting the run, and can be recovered by re-running or by the
+census fallback.</p>
     </div>
 
     <div class="section level2">

@@ -1,5 +1,54 @@
 # Changelog
 
+## DistrictAssignments 0.1.6
+
+Production-hardening release: large member lists, many district layers,
+and messy input can no longer sink a run.
+
+### Bug fixes and robustness
+
+- Geocoding requests are now sent in chunks of 500 with per-chunk error
+  handling. Previously a single failed request (timeout, rate limit,
+  server error) aborted the entire geocode call – on a list of thousands
+  of addresses, one transient failure lost everything. Now only the
+  affected chunk’s rows are left ungeocoded, with a warning naming the
+  row range.
+- New `geocode_status` value `"Geocoder error"` marks rows whose geocode
+  *request* failed (retryable), distinguishing them from
+  `"No geocode match"` (the address itself didn’t resolve). They are
+  counted separately in the summary, shown in the app’s status line, and
+  announced with an app notification explaining how to retry; the census
+  fallback still retries them.
+- Street/city columns are coerced to character before geocoding, so a
+  column that Excel or CSV read as numeric (house numbers, ZIP-like
+  values) no longer aborts the run with a type error.
+- Duplicate district layer names are made unique (with a message).
+  Previously two layers with the same name – e.g. two uploaded files
+  both named `congress` – produced colliding output columns that sf
+  silently renamed to `.x`/`.y`, which also broke the app’s map coloring
+  and count table. Layer names that sanitize to nothing (e.g. `"!!!"`)
+  now fall back to a positional `District_N` prefix instead of leaving
+  columns unprefixed.
+- Input columns that collide with a layer’s output columns (typically a
+  re-uploaded previous export still carrying `Congressional_DISTRICT`)
+  are renamed with an `_input` suffix, with a message, so the fresh
+  assignment always lands under its documented column name.
+- District layers with no features are rejected with a clear error (they
+  would assign `NA` everywhere and previously made
+  `restrictToDistrictArea = TRUE` fail with an invalid extent);
+  [`compute_search_extent()`](https://aberuiz.github.io/DistrictAssignments/reference/compute_search_extent.md)
+  also validates that the extent is finite. A layer containing no
+  polygons (e.g. a points file uploaded by mistake) triggers a warning.
+- The census fallback now stops after 5 consecutive request failures
+  instead of burning a 30-second timeout on every remaining row when the
+  service is unreachable, and prints progress every 100 rows on large
+  retry batches.
+- Failed-address listings (console summary and app notification) are
+  capped at 10 rows with a “… and N more” note, instead of flooding the
+  console or screen when thousands of rows fail.
+- A member list where no row geocodes no longer emits confusing “no
+  non-missing arguments to max” warnings during assignment.
+
 ## DistrictAssignments 0.1.5
 
 ### New features

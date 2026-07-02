@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.5</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.6</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,22 @@
       <small>Source: <a href="https://github.com/aberuiz/DistrictAssignments/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.1.6" id="districtassignments-016">DistrictAssignments 0.1.6<a class="anchor" aria-label="anchor" href="#districtassignments-016"></a></h2>
+<p>Production-hardening release: large member lists, many district layers, and messy input can no longer sink a run.</p>
+<div class="section level3">
+<h3 id="bug-fixes-and-robustness-0-1-6">Bug fixes and robustness<a class="anchor" aria-label="anchor" href="#bug-fixes-and-robustness-0-1-6"></a></h3>
+<ul><li>Geocoding requests are now sent in chunks of 500 with per-chunk error handling. Previously a single failed request (timeout, rate limit, server error) aborted the entire geocode call – on a list of thousands of addresses, one transient failure lost everything. Now only the affected chunk’s rows are left ungeocoded, with a warning naming the row range.</li>
+<li>New <code>geocode_status</code> value <code>"Geocoder error"</code> marks rows whose geocode <em>request</em> failed (retryable), distinguishing them from <code>"No geocode match"</code> (the address itself didn’t resolve). They are counted separately in the summary, shown in the app’s status line, and announced with an app notification explaining how to retry; the census fallback still retries them.</li>
+<li>Street/city columns are coerced to character before geocoding, so a column that Excel or CSV read as numeric (house numbers, ZIP-like values) no longer aborts the run with a type error.</li>
+<li>Duplicate district layer names are made unique (with a message). Previously two layers with the same name – e.g. two uploaded files both named <code>congress</code> – produced colliding output columns that sf silently renamed to <code>.x</code>/<code>.y</code>, which also broke the app’s map coloring and count table. Layer names that sanitize to nothing (e.g. <code>"!!!"</code>) now fall back to a positional <code>District_N</code> prefix instead of leaving columns unprefixed.</li>
+<li>Input columns that collide with a layer’s output columns (typically a re-uploaded previous export still carrying <code>Congressional_DISTRICT</code>) are renamed with an <code>_input</code> suffix, with a message, so the fresh assignment always lands under its documented column name.</li>
+<li>District layers with no features are rejected with a clear error (they would assign <code>NA</code> everywhere and previously made <code>restrictToDistrictArea = TRUE</code> fail with an invalid extent); <code><a href="../reference/compute_search_extent.html">compute_search_extent()</a></code> also validates that the extent is finite. A layer containing no polygons (e.g. a points file uploaded by mistake) triggers a warning.</li>
+<li>The census fallback now stops after 5 consecutive request failures instead of burning a 30-second timeout on every remaining row when the service is unreachable, and prints progress every 100 rows on large retry batches.</li>
+<li>Failed-address listings (console summary and app notification) are capped at 10 rows with a “… and N more” note, instead of flooding the console or screen when thousands of rows fail.</li>
+<li>A member list where no row geocodes no longer emits confusing “no non-missing arguments to max” warnings during assignment.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.5" id="districtassignments-015">DistrictAssignments 0.1.5<a class="anchor" aria-label="anchor" href="#districtassignments-015"></a></h2>
 <div class="section level3">

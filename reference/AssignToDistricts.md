@@ -59,10 +59,15 @@ columns joined on. Summary statistics are attached as the
 ## Details
 
 Every input row is carried through: rows without coordinates become
-empty points and simply receive `NA` district columns. Supports any
-number of layers; overlapping polygons within a layer resolve to the
-first match (with a message) so a point is never duplicated into
-multiple rows.
+empty points and simply receive `NA` district columns, and a geocoded
+point that falls outside every polygon of a layer receives `NA` for that
+layer. Supports any number of layers; overlapping polygons within a
+layer resolve to the first match (with a message) so a point is never
+duplicated into multiple rows. If an input column has the same name as a
+layer's prefixed output column (e.g. a re-uploaded previous export still
+carrying `Congressional_DISTRICT`), the input copy is renamed with an
+`_input` suffix (with a message) so the fresh assignment keeps the
+expected name.
 
 ## Examples
 

@@ -10,13 +10,13 @@ Source:
 [`DESCRIPTION`](https://github.com/aberuiz/DistrictAssignments/blob/main/DESCRIPTION)
 
 Ruiz A (2026). *DistrictAssignments: Geocode Member Lists and Assign
-Addresses to Districts*. R package version 0.1.5,
+Addresses to Districts*. R package version 0.1.6,
 <https://github.com/aberuiz/DistrictAssignments>.
 
     @Manual{,
       title = {DistrictAssignments: Geocode Member Lists and Assign Addresses to Districts},
       author = {Abraham Ruiz},
       year = {2026},
-      note = {R package version 0.1.5},
+      note = {R package version 0.1.6},
       url = {https://github.com/aberuiz/DistrictAssignments},
     }

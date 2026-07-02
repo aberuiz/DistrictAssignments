@@ -13,7 +13,7 @@ geocoded points across many layer sets pay preparation only once."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.5</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.6</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -97,9 +97,14 @@ columns joined on. Summary statistics are attached as the
     <div class="section level2">
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
     <p>Every input row is carried through: rows without coordinates become empty
-points and simply receive <code>NA</code> district columns. Supports any number of
-layers; overlapping polygons within a layer resolve to the first match (with
-a message) so a point is never duplicated into multiple rows.</p>
+points and simply receive <code>NA</code> district columns, and a geocoded point that
+falls outside every polygon of a layer receives <code>NA</code> for that layer.
+Supports any number of layers; overlapping polygons within a layer resolve
+to the first match (with a message) so a point is never duplicated into
+multiple rows. If an input column has the same name as a layer's prefixed
+output column (e.g. a re-uploaded previous export still carrying
+<code>Congressional_DISTRICT</code>), the input copy is renamed with an <code>_input</code>
+suffix (with a message) so the fresh assignment keeps the expected name.</p>
     </div>
 
     <div class="section level2">

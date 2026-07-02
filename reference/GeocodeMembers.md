@@ -66,7 +66,10 @@ The member data.frame with these columns added/replaced:
 
 - geocode_status:
 
-  `"OK"`, `"Missing address"`, or `"No geocode match"`
+  `"OK"`, `"Missing address"` (blank street/city), `"No geocode match"`
+  (the geocoder found no candidate), or `"Geocoder error"` (the request
+  failed – e.g. a network/service problem – so the address was never
+  actually tried)
 
 - geo_x, geo_y:
 
@@ -88,6 +91,13 @@ The columns `original_row_id`, `geocode_status`, and everything prefixed
 already contains them (e.g. a re-uploaded previous export), they are
 replaced with freshly computed values so stale results can never leak
 into a new run.
+
+The address and city columns are coerced to character (so a column read
+as numeric still geocodes), and requests are sent in chunks of 500 so
+that on large lists a transient service failure only affects its own
+chunk: those rows are flagged `"Geocoder error"` (with a warning naming
+the row range) instead of aborting the run, and can be recovered by
+re-running or by the census fallback.
 
 ## Examples
 

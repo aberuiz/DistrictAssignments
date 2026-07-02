@@ -37,7 +37,11 @@ a `DISTRICT` column in a layer named `Congressional` becomes
 in the joined output. Names are resolved per layer, in order of
 precedence: an explicit `districtNames` entry, the name on the
 `districtsList` element, the file's base name (for path elements), then
-a positional fallback.
+a positional fallback. Duplicate names are made unique (with a message),
+so any number of layers – including several files sharing a base name –
+keep distinct, predictable output columns. Layers without a CRS or
+without any features are rejected with a clear error; a layer containing
+no polygons triggers a warning.
 
 ## Examples
 
