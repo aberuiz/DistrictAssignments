@@ -1,0 +1,29 @@
+url: https://aberuiz.github.io/DistrictAssignments/
+
+template:
+  bootstrap: 5
+  bootswatch: minty
+
+reference:
+- title: One-shot workflow
+  desc: Geocode a member list and assign districts in a single call.
+  contents:
+  - AssignDistricts
+
+- title: Geocode once, assign many
+  desc: >
+    The efficient path when the same addresses are joined against several
+    district sets: geocode a single time, then reuse the points.
+  contents:
+  - GeocodeMembers
+  - prepare_district_layers
+  - AssignToDistricts
+  - compute_search_extent
+
+- title: Results
+  contents:
+  - print_summary
+
+- title: Shiny app
+  contents:
+  - run_app

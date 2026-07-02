@@ -1,0 +1,33 @@
+Package: DistrictAssignments
+Title: Geocode Member Lists and Assign Addresses to Districts
+Version: 0.1.0
+Authors@R:
+    person("Abraham", "Ruiz", email = "abe@graycompass.com", role = c("aut", "cre"))
+Description: Converts addresses to coordinates (geocoding, via the ArcGIS
+    World Geocoder) and assigns each address to the district(s) it falls
+    within. Works with any number of district layers in a single run, so a
+    member list can be geocoded once and joined against several districting
+    files (congressional, state house, county, and so on). Includes a Shiny
+    app ('run_app()') as a point-and-click interface over the same functions.
+License: MIT + file LICENSE
+URL: https://github.com/aberuiz/DistrictAssignments, https://aberuiz.github.io/DistrictAssignments/
+BugReports: https://github.com/aberuiz/DistrictAssignments/issues
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Depends:
+    R (>= 4.1)
+Imports:
+    arcgisgeocode,
+    sf,
+    tools,
+    utils,
+    yyjsonr
+Suggests:
+    bslib,
+    DT,
+    readxl,
+    shiny,
+    testthat (>= 3.0.0),
+    writexl
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0

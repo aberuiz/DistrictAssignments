@@ -1,0 +1,10 @@
+^assets$
+^\.github$
+^.*\.Rproj$
+^\.Rproj\.user$
+^\.Rhistory$
+^\.DS_Store$
+^LICENSE\.md$
+^_pkgdown\.yml$
+^docs$
+^pkgdown$
