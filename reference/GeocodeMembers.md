@@ -1,0 +1,85 @@
+# Geocode a member list
+
+Geocode a member list ONCE and return every input row, flagged and
+(where possible) coordinated. No rows are dropped. Splitting geocoding
+from assignment is what enables the "geocode once, apply to many
+districting files" workflow: geocode a member list a single time, then
+reuse those points across any number of layer sets via
+[`AssignToDistricts()`](https://aberuiz.github.io/DistrictAssignments/reference/AssignToDistricts.md).
+
+## Usage
+
+``` r
+GeocodeMembers(
+  memberList,
+  StreetCol,
+  CityCol,
+  boundaries = NULL,
+  verbose = TRUE
+)
+```
+
+## Arguments
+
+- memberList:
+
+  A data.frame, or a path to a `.csv` / `.xlsx` / `.xls` file, of
+  addresses (Excel files require the suggested `readxl` package).
+
+- StreetCol:
+
+  Name of the street-address column.
+
+- CityCol:
+
+  Name of the city column.
+
+- boundaries:
+
+  Optional bbox (see
+  [`compute_search_extent()`](https://aberuiz.github.io/DistrictAssignments/reference/compute_search_extent.md))
+  to restrict geocoding. Default `NULL` = unrestricted.
+
+- verbose:
+
+  Print progress to the console.
+
+## Value
+
+The member data.frame with these columns added/replaced:
+
+- original_row_id:
+
+  stable 1..N identifier for mapping results back
+
+- Street.Address, City:
+
+  the resolved address/city used for geocoding
+
+- geocode_status:
+
+  `"OK"`, `"Missing address"`, or `"No geocode match"`
+
+- geo_x, geo_y:
+
+  longitude/latitude (`NA` where not geocoded)
+
+- geo\_\*:
+
+  additional geocoder fields (geo_score, geo_match_addr, ...)
+
+## Details
+
+The columns `original_row_id`, `geocode_status`, and everything prefixed
+`geo_` are reserved: they are (re)written by this function. If the input
+already contains them (e.g. a re-uploaded previous export), they are
+replaced with freshly computed values so stale results can never leak
+into a new run.
+
+## Examples
+
+``` r
+if (FALSE) { # \dontrun{
+pts <- GeocodeMembers("members.csv", "Street.Address", "City")
+} # }
+```
