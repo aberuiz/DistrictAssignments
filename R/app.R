@@ -598,7 +598,13 @@ app_server <- function(input, output, session) {
     shiny::tagList(
       shiny::selectInput("mapLayer", "Color points by district layer:",
                          choices = names(assignedLayers())),
-      leaflet::leafletOutput("map", height = 550),
+      # Sized against the viewport (not a fixed pixel height) and marked
+      # flex-shrink: 0 so the fillable card can't squeeze the map to make room
+      # for the counts table below -- the panel scrolls to the table instead.
+      shiny::div(
+        style = "height: 50vh; min-height: 320px; flex-shrink: 0;",
+        leaflet::leafletOutput("map", height = "100%")
+      ),
       shiny::textOutput("mapCaption"),
       DT::DTOutput("mapCounts")
     )
