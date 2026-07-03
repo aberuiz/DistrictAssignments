@@ -1,6 +1,6 @@
 Package: DistrictAssignments
 Title: Geocode Member Lists and Assign Addresses to Districts
-Version: 0.1.6
+Version: 0.1.7
 Authors@R:
     person("Abraham", "Ruiz", email = "abe@graycompass.com", role = c("aut", "cre"))
 Description: Converts addresses to coordinates (geocoding, via the ArcGIS
@@ -24,7 +24,7 @@ Imports:
     utils,
     yyjsonr
 Suggests:
-    bslib,
+    bslib (>= 0.6.1),
     DT,
     htmltools,
     leaflet,

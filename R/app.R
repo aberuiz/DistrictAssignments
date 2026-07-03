@@ -36,48 +36,83 @@ run_app <- function(max_upload_mb = 20, ...) {
   shiny::runApp(shiny::shinyApp(app_ui(), app_server), ...)
 }
 
+# The sidebar holds a lot of controls (upload, geocoding, district files,
+# options, download), so it's grouped into accordion sections that stay
+# compact even when many district files or columns are in play. Lists that
+# grow with the user's data (per-file naming, download columns) are capped
+# with their own scroll areas so the sidebar itself never becomes a
+# pages-long scroll.
 app_ui <- function() {
-  shiny::fluidPage(
-    shiny::titlePanel("Assign Districts"),
-    shiny::sidebarLayout(
-      shiny::sidebarPanel(
-        shiny::fileInput("memberList", "Upload Member List (CSV or Excel)",
-                         accept = c(".csv", ".xlsx", ".xls")),
-        shiny::uiOutput("columnSelection"),
-        shiny::uiOutput("geocodeUI"),
-        shiny::textOutput("geocodeStatus"),
-        shiny::tags$hr(),
-        shiny::fileInput("districts", "District Files (.gpkg, .geojson, or zipped .shp)",
-                         accept = c(".zip", ".gpkg", ".geojson"),
-                         multiple = TRUE,
-                         buttonLabel = "Add File(s)..."),
-        shiny::helpText(paste("You can keep adding district files. At least one is required.",
-                              "Shapefiles must be zipped (with their sidecar files);",
-                              "GeoPackage and GeoJSON can be uploaded directly or zipped.")),
-        shiny::uiOutput("districtNaming"),
-        shiny::uiOutput("clearDistrictsUI"),
-        shiny::checkboxInput("removeGEO", "Remove Geometry Column", value = TRUE),
-        shiny::checkboxInput("restrictGeo", "Restrict geocoding to district area", value = FALSE),
-        shiny::checkboxInput("censusFallback",
-                             "Retry failed geocodes with the US Census geocoder", value = TRUE),
-        shiny::actionButton("run", "Assign Districts"),
-        shiny::actionButton("regeocode", "Clear geocode cache"),
-        shiny::helpText("Clear the cache to force a fresh geocode."),
-        shiny::textOutput("downloadInstructions"),
-        shiny::uiOutput("columnSelectionForDownload"),
-        shiny::downloadButton("downloadData", "Download Selected Columns")
+  bslib::page_sidebar(
+    title = "Assign Districts",
+    theme = bslib::bs_theme(version = 5, bootswatch = "minty"),
+    sidebar = bslib::sidebar(
+      width = 360,
+      bslib::accordion(
+        multiple = TRUE,
+        open = c("Member data", "District files"),
+        bslib::accordion_panel(
+          "Member data",
+          shiny::fileInput("memberList", "Upload Member List (CSV or Excel)",
+                           accept = c(".csv", ".xlsx", ".xls")),
+          # Choices are filled server-side (updateSelectizeInput with
+          # server = TRUE) so member files with hundreds of columns don't
+          # bloat the page.
+          shiny::selectizeInput("streetColumn", "Street Address Column",
+                                choices = NULL,
+                                options = list(placeholder = "Upload a member list first")),
+          shiny::selectizeInput("cityColumn", "City Column",
+                                choices = NULL,
+                                options = list(placeholder = "Upload a member list first")),
+          shiny::uiOutput("geocodeUI"),
+          shiny::textOutput("geocodeStatus")
+        ),
+        bslib::accordion_panel(
+          "District files",
+          shiny::fileInput("districts", "District Files (.gpkg, .geojson, or zipped .shp)",
+                           accept = c(".zip", ".gpkg", ".geojson"),
+                           multiple = TRUE,
+                           buttonLabel = "Add File(s)..."),
+          shiny::helpText(paste("You can keep adding district files. At least one is required.",
+                                "Shapefiles must be zipped (with their sidecar files);",
+                                "GeoPackage and GeoJSON can be uploaded directly or zipped.")),
+          # Many uploads scroll inside this box instead of growing the sidebar.
+          shiny::div(style = "max-height: 300px; overflow-y: auto;",
+                     shiny::uiOutput("districtNaming")),
+          shiny::uiOutput("clearDistrictsUI")
+        ),
+        bslib::accordion_panel(
+          "Options",
+          shiny::checkboxInput("removeGEO", "Remove Geometry Column", value = TRUE),
+          shiny::checkboxInput("restrictGeo", "Restrict geocoding to district area", value = FALSE),
+          shiny::checkboxInput("censusFallback",
+                               "Retry failed geocodes with the US Census geocoder", value = TRUE),
+          shiny::actionButton("regeocode", "Clear geocode cache",
+                              class = "btn-outline-secondary btn-sm"),
+          shiny::helpText("Clear the cache to force a fresh geocode.")
+        )
       ),
-      shiny::mainPanel(
-        shiny::tabsetPanel(
-          shiny::tabPanel("Table", DT::DTOutput("results")),
-          # Read-only results map (requires the suggested leaflet package):
-          # polygons per layer as toggleable groups, points colored by the
-          # selected layer's assignment, per-district member counts.
-          shiny::tabPanel("Map", shiny::uiOutput("mapUI"))
+      shiny::actionButton("run", "Assign Districts", class = "btn-primary w-100"),
+      # Closed until results exist; the server pops it open after a run.
+      bslib::accordion(
+        id = "downloadAccordion",
+        open = FALSE,
+        bslib::accordion_panel(
+          "Download",
+          shiny::textOutput("downloadInstructions"),
+          shiny::uiOutput("columnSelectionForDownload"),
+          shiny::downloadButton("downloadData", "Download Selected Columns",
+                                class = "w-100")
         )
       )
     ),
-    theme = bslib::bs_theme(version = 5, bootswatch = "minty")
+    bslib::navset_card_underline(
+      bslib::nav_panel("Table", DT::DTOutput("results")),
+      # Read-only results map (requires the suggested leaflet package):
+      # polygons per layer as toggleable groups, points colored by the
+      # selected layer's assignment, per-district member counts.
+      bslib::nav_panel("Map", shiny::uiOutput("mapUI"))
+    )
   )
 }
 
@@ -149,6 +184,8 @@ app_server <- function(input, output, session) {
 
   # Clear the accumulated district files.
   shiny::observeEvent(input$clearDistricts, {
+    files <- districtFiles()
+    if (!is.null(files)) unlink(files$datapath)
     districtFiles(NULL)
     shiny::showNotification("Cleared district files.", type = "message", duration = 3)
   })
@@ -156,7 +193,8 @@ app_server <- function(input, output, session) {
   # Show a "Clear district files" button only once files have been added.
   output$clearDistrictsUI <- shiny::renderUI({
     shiny::req(districtFiles())
-    shiny::actionButton("clearDistricts", "Clear district files")
+    shiny::actionButton("clearDistricts", "Clear district files",
+                        class = "btn-outline-danger btn-sm")
   })
 
   # Read + validate + name-prefix all accumulated district layers. Called from
@@ -304,46 +342,47 @@ app_server <- function(input, output, session) {
       # A new member list invalidates any cached geocode.
       geocodedData(NULL)
       geocodeKey(NULL)
+
+      # Fill the (static, server-side) column selectors. server = TRUE keeps
+      # the choice list on the server, so files with hundreds of columns stay
+      # fast and searchable.
+      columns <- colnames(csvData())
+      shiny::updateSelectizeInput(
+        session, "streetColumn", choices = columns,
+        selected = if ("Street.Address" %in% columns) "Street.Address" else columns[1],
+        server = TRUE
+      )
+      shiny::updateSelectizeInput(
+        session, "cityColumn", choices = columns,
+        selected = if ("City" %in% columns) "City" else columns[1],
+        server = TRUE
+      )
     }, error = function(e) {
       csvData(NULL)
+      shiny::updateSelectizeInput(session, "streetColumn", choices = character(0), server = TRUE)
+      shiny::updateSelectizeInput(session, "cityColumn", choices = character(0), server = TRUE)
       shiny::showNotification(paste("Could not read member list:", e$message),
                               type = "error", duration = NULL)
     })
   })
 
-  output$columnSelection <- shiny::renderUI({
-    shiny::req(csvData())
-    columns <- colnames(csvData())
-
-    # Set default selections
-    default_street <- if ("Street.Address" %in% columns) "Street.Address" else columns[1]
-    default_city <- if ("City" %in% columns) "City" else columns[1]
-
-    shiny::tagList(
-      shiny::selectInput("streetColumn", "Select Street Address Column",
-                         choices = columns,
-                         selected = default_street),
-      shiny::selectInput("cityColumn", "Select City Column",
-                         choices = columns,
-                         selected = default_city)
-    )
-  })
-
-  # One text input per accumulated district file, letting the user name each
-  # layer. The name becomes the prefix on that layer's output columns (e.g. a
-  # name of "Congressional" turns a "DISTRICT" column into
-  # "Congressional_DISTRICT"). Defaults to the uploaded file's base name.
+  # One card per accumulated district file: the file name (truncated with an
+  # ellipsis, full name in the tooltip, so long names can't stretch the
+  # sidebar), a remove button, and a text input naming the layer. The name
+  # becomes the prefix on that layer's output columns (e.g. a name of
+  # "Congressional" turns a "DISTRICT" column into "Congressional_DISTRICT").
+  # Defaults to the uploaded file's base name.
   #
-  # This UI re-renders whenever a file is added, which recreates the text boxes.
-  # We isolate() the current input values and reuse them as defaults so any names
-  # the user already typed are preserved instead of reverting to the file name.
-  # Inputs are keyed by each file's uid, so a cleared file's typed name can never
-  # attach to a new file.
+  # This UI re-renders whenever a file is added or removed, which recreates the
+  # text boxes. We isolate() the current input values and reuse them as defaults
+  # so any names the user already typed are preserved instead of reverting to
+  # the file name. Inputs are keyed by each file's uid, so a removed file's
+  # typed name can never attach to a new file.
   output$districtNaming <- shiny::renderUI({
     shiny::req(districtFiles())
     files <- districtFiles()
     shiny::isolate({
-      lapply(seq_len(nrow(files)), function(i) {
+      cards <- lapply(seq_len(nrow(files)), function(i) {
         input_id <- paste0("districtName_", files$uid[i])
         current <- input[[input_id]]
         default <- if (!is.null(current) && nzchar(current)) {
@@ -351,13 +390,45 @@ app_server <- function(input, output, session) {
         } else {
           tools::file_path_sans_ext(files$name[i])
         }
-        shiny::textInput(
-          inputId = input_id,
-          label   = paste0("Name for district file (", files$name[i], ")"),
-          value   = default
+        shiny::div(
+          class = "border rounded p-2 mb-2",
+          shiny::div(
+            class = "d-flex justify-content-between align-items-center mb-1",
+            shiny::tags$small(
+              class = "text-muted text-truncate me-2",
+              style = "min-width: 0;",  # lets text-truncate work inside flex
+              title = files$name[i],
+              files$name[i]
+            ),
+            shiny::tags$button(
+              type = "button", class = "btn-close flex-shrink-0",
+              title = "Remove this file",
+              onclick = sprintf(
+                "Shiny.setInputValue('removeDistrictUid', %d, {priority: 'event'})",
+                files$uid[i]
+              )
+            )
+          ),
+          shiny::textInput(input_id, label = NULL, value = default, width = "100%")
         )
       })
+      shiny::tagList(
+        shiny::helpText("Each name becomes the prefix on that layer's output columns."),
+        cards
+      )
     })
+  })
+
+  # Remove a single district file (the X on its card).
+  shiny::observeEvent(input$removeDistrictUid, {
+    files <- districtFiles()
+    shiny::req(files)
+    drop <- files$uid == input$removeDistrictUid
+    if (any(drop)) {
+      unlink(files$datapath[drop])
+      remaining <- files[!drop, , drop = FALSE]
+      districtFiles(if (nrow(remaining) > 0) remaining else NULL)
+    }
   })
 
   # Manually clear the geocode cache so the next run geocodes from scratch.
@@ -401,44 +472,52 @@ app_server <- function(input, output, session) {
       results(result)
       assignedLayers(layers)
 
-      # Extract and display summary statistics
+      # Show the summary statistics in a modal: a notification renders its
+      # text as collapsed HTML (newlines vanish) and is too small for a
+      # multi-line report anyway.
       stats <- attr(result, "summary_stats")
       if (!is.null(stats)) {
-        summary_msg <- sprintf(
-          "Processing complete!\n\nTotal addresses: %d\nInvalid addresses (blank/NA): %d\nFailed geocoding: %d\nSuccessfully geocoded: %d",
-          stats$original_count,
-          stats$invalid_address_count,
-          stats$failed_geocoding_count,
-          stats$successful_count
+        summary_list <- shiny::tags$ul(
+          shiny::tags$li(sprintf("Total addresses: %d", stats$original_count)),
+          shiny::tags$li(sprintf("Invalid addresses (blank/NA): %d",
+                                 stats$invalid_address_count)),
+          shiny::tags$li(sprintf("Failed geocoding: %d", stats$failed_geocoding_count)),
+          shiny::tags$li(sprintf("Successfully geocoded: %d", stats$successful_count)),
+          if (isTRUE(stats$geocoder_error_count > 0)) {
+            shiny::tags$li(sprintf("Geocoder request errors (retryable): %d",
+                                   stats$geocoder_error_count))
+          }
         )
 
-        if (isTRUE(stats$geocoder_error_count > 0)) {
-          summary_msg <- paste0(summary_msg,
-                                sprintf("\nGeocoder request errors (retryable): %d",
-                                        stats$geocoder_error_count))
-        }
-
-        # Add details about failed rows if any; cap the list so a large
-        # upload with many bad addresses doesn't produce a screen-filling
-        # notification (the table's geocode_status column has them all).
+        # Details about failed rows, if any; cap the list so a large upload
+        # with many bad addresses stays readable (the table's geocode_status
+        # column has them all), and scroll what remains.
+        failed_block <- NULL
         if (stats$failed_geocoding_count > 0 && !is.null(stats$failed_geocoding_rows)) {
           fr <- utils::head(stats$failed_geocoding_rows, 10)
-          failed_details <- paste(
-            sprintf("Row %d: %s, %s",
-                    fr$original_row_id, fr$Street.Address, fr$City),
-            collapse = "\n"
-          )
+          failed_lines <- sprintf("Row %d: %s, %s",
+                                  fr$original_row_id, fr$Street.Address, fr$City)
           if (stats$failed_geocoding_count > nrow(fr)) {
-            failed_details <- paste0(
-              failed_details,
-              sprintf("\n... and %d more (see the geocode_status column)",
-                      stats$failed_geocoding_count - nrow(fr))
-            )
+            failed_lines <- c(failed_lines,
+                              sprintf("... and %d more (see the geocode_status column)",
+                                      stats$failed_geocoding_count - nrow(fr)))
           }
-          summary_msg <- paste(summary_msg, "\n\nFailed addresses:\n", failed_details, sep = "")
+          failed_block <- shiny::tagList(
+            shiny::tags$strong("Failed addresses:"),
+            shiny::tags$div(
+              style = "white-space: pre-wrap; max-height: 200px; overflow-y: auto;",
+              paste(failed_lines, collapse = "\n")
+            )
+          )
         }
 
-        shiny::showNotification(summary_msg, type = "message", duration = NULL)
+        shiny::showModal(shiny::modalDialog(
+          title = "Processing complete",
+          summary_list,
+          failed_block,
+          easyClose = TRUE,
+          footer = shiny::modalButton("Close")
+        ))
       }
     }, error = function(e) {
       shiny::showNotification(paste("Error:", e$message), type = "error", duration = NULL)
@@ -460,7 +539,26 @@ app_server <- function(input, output, session) {
     if (is.data.frame(result_data) && nrow(result_data) > 0) {
       result_data <- result_data[, exportable_columns(result_data), drop = FALSE]
 
-      dt <- DT::datatable(result_data, options = list(scrollX = TRUE, pageLength = 5))
+      # Built for wide results: a "Show/hide columns" button (colvis) tames
+      # many district layers' worth of columns, per-column filters help find
+      # rows in long lists, and long cell text is truncated at 40 characters
+      # with the full value in the hover tooltip.
+      dt <- DT::datatable(
+        result_data,
+        filter = "top",
+        extensions = "Buttons",
+        plugins = "ellipsis",
+        options = list(
+          scrollX = TRUE,
+          pageLength = 25,
+          dom = "Blfrtip",
+          buttons = list(list(extend = "colvis", text = "Show/hide columns")),
+          columnDefs = list(list(
+            targets = "_all",
+            render = DT::JS("$.fn.dataTable.render.ellipsis(40, false)")
+          ))
+        )
+      )
 
       # Highlight problem rows so they're visible instead of silently dropped:
       # anything not "OK" (missing address / no geocode match) gets a red tint.
@@ -502,7 +600,7 @@ app_server <- function(input, output, session) {
                          choices = names(assignedLayers())),
       leaflet::leafletOutput("map", height = 550),
       shiny::textOutput("mapCaption"),
-      shiny::tableOutput("mapCounts")
+      DT::DTOutput("mapCounts")
     )
   })
 
@@ -557,9 +655,11 @@ app_server <- function(input, output, session) {
                                      color = point_color, popup = popup)
     }
 
+    # Keep the control expanded while it's small; with many layers it would
+    # cover a big corner of the map, so collapse it to the icon instead.
     m <- leaflet::addLayersControl(
       m, overlayGroups = names(layers),
-      options = leaflet::layersControlOptions(collapsed = FALSE)
+      options = leaflet::layersControlOptions(collapsed = length(layers) > 5)
     )
     # Start with only the selected layer's polygons visible; the control lets
     # the user toggle the rest on.
@@ -578,7 +678,10 @@ app_server <- function(input, output, session) {
             n_missing, if (n_missing == 1) "" else "s")
   })
 
-  output$mapCounts <- shiny::renderTable({
+  # Rendered with DT (paged + searchable) rather than a plain table: a layer
+  # with hundreds of districts (precincts, wards) would otherwise append an
+  # arbitrarily tall table below the map.
+  output$mapCounts <- DT::renderDT({
     shiny::req(results(), assignedLayers(), input$mapLayer)
     layers <- assignedLayers()
     shiny::req(input$mapLayer %in% names(layers))
@@ -593,7 +696,8 @@ app_server <- function(input, output, session) {
       df <- rbind(df, data.frame(District = "(geocoded, outside all districts)",
                                  Members = n_unassigned))
     }
-    df
+    DT::datatable(df, rownames = FALSE,
+                  options = list(pageLength = 10, dom = "ftip"))
   })
 
   # ---- Download ------------------------------------------------------------
@@ -604,14 +708,46 @@ app_server <- function(input, output, session) {
     shiny::req(results())
     # Offer only columns that can actually be written to a CSV.
     availableColumns(exportable_columns(results()))
+    # Results exist, so downloading is now meaningful: open the panel.
+    bslib::accordion_panel_open("downloadAccordion", "Download")
   })
 
-  # Render UI for column selection
+  # Checked by default: the user's original columns plus the district
+  # assignments. The geocoder bookkeeping columns (original_row_id,
+  # geocode_status, geo_*) are offered but unchecked -- most users don't want
+  # them once districting is done.
+  default_download_columns <- function(cols) {
+    cols[!(cols %in% c("original_row_id", "geocode_status") | startsWith(cols, "geo_"))]
+  }
+
+  # Column picker for the download. The checkbox list scrolls in its own box
+  # so many district layers' worth of columns can't stretch the sidebar.
   output$columnSelectionForDownload <- shiny::renderUI({
     shiny::req(availableColumns())
-    shiny::checkboxGroupInput("selectedColumns", "Select columns to download:",
-                              choices = availableColumns(),
-                              selected = NULL)
+    shiny::tagList(
+      shiny::div(
+        class = "mb-1",
+        shiny::actionLink("selectAllColumns", "Select all"),
+        " | ",
+        shiny::actionLink("selectNoColumns", "Select none")
+      ),
+      shiny::div(
+        class = "border rounded p-2",
+        style = "max-height: 250px; overflow-y: auto;",
+        shiny::checkboxGroupInput("selectedColumns", NULL,
+                                  choices = availableColumns(),
+                                  selected = default_download_columns(availableColumns()))
+      )
+    )
+  })
+
+  shiny::observeEvent(input$selectAllColumns, {
+    shiny::updateCheckboxGroupInput(session, "selectedColumns",
+                                    selected = availableColumns())
+  })
+  shiny::observeEvent(input$selectNoColumns, {
+    shiny::updateCheckboxGroupInput(session, "selectedColumns",
+                                    selected = character(0))
   })
 
   # Update download instructions
