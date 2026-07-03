@@ -22,7 +22,7 @@
 
     <a class="navbar-brand me-2" href="index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.6</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.7</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -76,17 +76,18 @@
 <div class="float">
 <img src="https://github.com/aberuiz/DistrictAssignments/blob/main/assets/App_2.png" alt="Shiny-Screenshot"><div class="figcaption">Shiny-Screenshot</div>
 </div>
+<p>The sidebar is organized into sections — <strong>Member data</strong>, <strong>District files</strong>, <strong>Options</strong>, and <strong>Download</strong> — matching the steps below.</p>
 <ol style="list-style-type: decimal">
 <li><p><strong>Upload a member list</strong> (<code>.csv</code>, <code>.xlsx</code>, or <code>.xls</code>) with the addresses you want to assign. (Excel files require the suggested <code>readxl</code> package.)</p></li>
 <li><p><strong>Select the Address and City columns.</strong> By default the app looks for columns named <code>Street.Address</code> and <code>City</code>; if they aren’t found you can pick which columns to use for geocoding.</p></li>
 <li><p><strong>Geocode Addresses.</strong> Press this to geocode the member list. Geocoding is independent of the district files, so you can run it as soon as your columns are chosen — while you gather district files. A status line reports how many addresses matched, and the result is cached so it isn’t repeated unnecessarily. (If you skip this step, geocoding runs automatically when you assign districts.)</p></li>
-<li><p><strong>Add district files.</strong> Upload district geometry as <code>.gpkg</code> or <code>.geojson</code> files directly, or as <code>.zip</code> archives (required for <code>.shp</code>, which needs its sidecar files). The button adds files to a list, so you can keep adding as many as you like. Give each one a name — the name becomes the prefix on that layer’s output columns (e.g. a layer named <code>Congressional</code> turns a <code>DISTRICT</code> column into <code>Congressional_DISTRICT</code>), which keeps columns from different layers distinct.</p></li>
+<li><p><strong>Add district files.</strong> Upload district geometry as <code>.gpkg</code> or <code>.geojson</code> files directly, or as <code>.zip</code> archives (required for <code>.shp</code>, which needs its sidecar files). The button adds files to a list, so you can keep adding as many as you like; each file can be removed individually with the ✕ on its card. Give each one a name — the name becomes the prefix on that layer’s output columns (e.g. a layer named <code>Congressional</code> turns a <code>DISTRICT</code> column into <code>Congressional_DISTRICT</code>), which keeps columns from different layers distinct.</p></li>
 <li><p><strong>Assign Districts.</strong> Assigns each geocoded address to the district(s) it falls within, across all uploaded layers. This reuses the cached geocoding, so it only runs the (fast) spatial joins.</p></li>
 <li>
-<p><strong>Review the results.</strong> A preview table appears. Rows that couldn’t be geocoded are <strong>highlighted red</strong> and carry a <code>geocode_status</code> of <code>Missing address</code> (blank/NA address), <code>No geocode match</code> (address not found), or <code>Geocoder error</code> (the geocoding request failed — e.g. a network hiccup — so clearing the geocode cache and re-running may fix it). Geocodes with a low match score (<code>geo_score</code> below 85) are <strong>highlighted amber</strong> — they matched, but possibly to the wrong place, so give them a second look. Nothing is dropped — every input row appears in the output.</p>
+<p><strong>Review the results.</strong> A summary of the run appears, and the results show in a table with per-column filters and a <strong>Show/hide columns</strong> button for taming wide results (long cell text is truncated — hover to see the full value). Rows that couldn’t be geocoded are <strong>highlighted red</strong> and carry a <code>geocode_status</code> of <code>Missing address</code> (blank/NA address), <code>No geocode match</code> (address not found), or <code>Geocoder error</code> (the geocoding request failed — e.g. a network hiccup — so clearing the geocode cache and re-running may fix it). Geocodes with a low match score (<code>geo_score</code> below 85) are <strong>highlighted amber</strong> — they matched, but possibly to the wrong place, so give them a second look. Nothing is dropped — every input row appears in the output.</p>
 <p>The <strong>Map tab</strong> (requires the suggested <code>leaflet</code> package) shows the same results on a map: district polygons labeled with per-district member counts, points colored by the assignment of the layer you pick, gray points for addresses outside every district, and a count table underneath.</p>
 </li>
-<li><p><strong>Download.</strong> Select the columns you want and export to <code>.csv</code>.</p></li>
+<li><p><strong>Download.</strong> The Download section opens once results exist, with your original columns and the district assignments pre-selected (the geocoder bookkeeping columns — <code>original_row_id</code>, <code>geocode_status</code>, <code>geo_*</code> — are offered but unchecked). Adjust the selection if you like (“Select all” / “Select none” links included) and export to <code>.csv</code>.</p></li>
 </ol>
 <p>Additional options:</p>
 <ul>

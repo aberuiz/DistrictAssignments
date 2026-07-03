@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.6</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.7</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,22 @@
       <small>Source: <a href="https://github.com/aberuiz/DistrictAssignments/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.1.7" id="districtassignments-017">DistrictAssignments 0.1.7<a class="anchor" aria-label="anchor" href="#districtassignments-017"></a></h2>
+<p>App UI overhaul: the interface now stays usable with many district files, many columns, and long district lists.</p>
+<div class="section level3">
+<h3 id="app-improvements-0-1-7">App improvements<a class="anchor" aria-label="anchor" href="#app-improvements-0-1-7"></a></h3>
+<ul><li>The sidebar is reorganized into accordion sections (Member data, District files, Options, Download) on a <code><a href="https://rstudio.github.io/bslib/reference/page_sidebar.html" class="external-link">bslib::page_sidebar()</a></code> layout, with the primary “Assign Districts” button styled and placed prominently. The Download section opens automatically once results exist.</li>
+<li>Lists that grow with the data are capped with their own scroll areas instead of stretching the sidebar: the per-file district naming list and the download column picker.</li>
+<li>Each uploaded district file now shows as a compact card with the file name truncated (full name on hover) and a remove button, so a single bad upload no longer requires clearing and re-adding everything.</li>
+<li>The download column picker defaults to the original member columns plus the district assignments (geocoder bookkeeping columns – <code>original_row_id</code>, <code>geocode_status</code>, <code>geo_*</code> – are offered but unchecked), and gains “Select all” / “Select none” links.</li>
+<li>The results table shows 25 rows, adds a “Show/hide columns” button and per-column filters, and truncates long cell text at 40 characters with the full value shown on hover.</li>
+<li>The post-run summary appears in a modal dialog instead of a notification; the notification collapsed its line breaks into one long paragraph.</li>
+<li>The map’s per-district member count table is paged and searchable, so a layer with hundreds of districts can’t stretch the page; the map’s layer control collapses when more than 5 layers are loaded.</li>
+<li>The street/city column selectors are searchable and server-side (<code>selectize</code>, <code>server = TRUE</code>), so member files with hundreds of columns stay fast.</li>
+<li>Requires <code>bslib</code> &gt;= 0.6.1 for the app.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.6" id="districtassignments-016">DistrictAssignments 0.1.6<a class="anchor" aria-label="anchor" href="#districtassignments-016"></a></h2>
 <p>Production-hardening release: large member lists, many district layers, and messy input can no longer sink a run.</p>

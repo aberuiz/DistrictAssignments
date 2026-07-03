@@ -42,6 +42,9 @@ run_app()
 
 Shiny-Screenshot
 
+The sidebar is organized into sections — **Member data**, **District
+files**, **Options**, and **Download** — matching the steps below.
+
 1.  **Upload a member list** (`.csv`, `.xlsx`, or `.xls`) with the
     addresses you want to assign. (Excel files require the suggested
     `readxl` package.)
@@ -60,9 +63,10 @@ Shiny-Screenshot
 4.  **Add district files.** Upload district geometry as `.gpkg` or
     `.geojson` files directly, or as `.zip` archives (required for
     `.shp`, which needs its sidecar files). The button adds files to a
-    list, so you can keep adding as many as you like. Give each one a
-    name — the name becomes the prefix on that layer’s output columns
-    (e.g. a layer named `Congressional` turns a `DISTRICT` column into
+    list, so you can keep adding as many as you like; each file can be
+    removed individually with the ✕ on its card. Give each one a name —
+    the name becomes the prefix on that layer’s output columns (e.g. a
+    layer named `Congressional` turns a `DISTRICT` column into
     `Congressional_DISTRICT`), which keeps columns from different layers
     distinct.
 
@@ -70,8 +74,11 @@ Shiny-Screenshot
     district(s) it falls within, across all uploaded layers. This reuses
     the cached geocoding, so it only runs the (fast) spatial joins.
 
-6.  **Review the results.** A preview table appears. Rows that couldn’t
-    be geocoded are **highlighted red** and carry a `geocode_status` of
+6.  **Review the results.** A summary of the run appears, and the
+    results show in a table with per-column filters and a **Show/hide
+    columns** button for taming wide results (long cell text is
+    truncated — hover to see the full value). Rows that couldn’t be
+    geocoded are **highlighted red** and carry a `geocode_status` of
     `Missing address` (blank/NA address), `No geocode match` (address
     not found), or `Geocoder error` (the geocoding request failed —
     e.g. a network hiccup — so clearing the geocode cache and re-running
@@ -86,7 +93,12 @@ Shiny-Screenshot
     pick, gray points for addresses outside every district, and a count
     table underneath.
 
-7.  **Download.** Select the columns you want and export to `.csv`.
+7.  **Download.** The Download section opens once results exist, with
+    your original columns and the district assignments pre-selected (the
+    geocoder bookkeeping columns — `original_row_id`, `geocode_status`,
+    `geo_*` — are offered but unchecked). Adjust the selection if you
+    like (“Select all” / “Select none” links included) and export to
+    `.csv`.
 
 Additional options:
 

@@ -1,5 +1,42 @@
 # Changelog
 
+## DistrictAssignments 0.1.7
+
+App UI overhaul: the interface now stays usable with many district
+files, many columns, and long district lists.
+
+### App improvements
+
+- The sidebar is reorganized into accordion sections (Member data,
+  District files, Options, Download) on a
+  [`bslib::page_sidebar()`](https://rstudio.github.io/bslib/reference/page_sidebar.html)
+  layout, with the primary “Assign Districts” button styled and placed
+  prominently. The Download section opens automatically once results
+  exist.
+- Lists that grow with the data are capped with their own scroll areas
+  instead of stretching the sidebar: the per-file district naming list
+  and the download column picker.
+- Each uploaded district file now shows as a compact card with the file
+  name truncated (full name on hover) and a remove button, so a single
+  bad upload no longer requires clearing and re-adding everything.
+- The download column picker defaults to the original member columns
+  plus the district assignments (geocoder bookkeeping columns –
+  `original_row_id`, `geocode_status`, `geo_*` – are offered but
+  unchecked), and gains “Select all” / “Select none” links.
+- The results table shows 25 rows, adds a “Show/hide columns” button and
+  per-column filters, and truncates long cell text at 40 characters with
+  the full value shown on hover.
+- The post-run summary appears in a modal dialog instead of a
+  notification; the notification collapsed its line breaks into one long
+  paragraph.
+- The map’s per-district member count table is paged and searchable, so
+  a layer with hundreds of districts can’t stretch the page; the map’s
+  layer control collapses when more than 5 layers are loaded.
+- The street/city column selectors are searchable and server-side
+  (`selectize`, `server = TRUE`), so member files with hundreds of
+  columns stay fast.
+- Requires `bslib` \>= 0.6.1 for the app.
+
 ## DistrictAssignments 0.1.6
 
 Production-hardening release: large member lists, many district layers,
