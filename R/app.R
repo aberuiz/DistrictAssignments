@@ -126,10 +126,39 @@ app_server <- function(input, output, session) {
   # different run than the points.
   assignedLayers <- shiny::reactiveVal(NULL)
 
-  # First attribute (non-geometry) column of a prepared layer: its columns are
-  # already name-prefixed, so this is the column of the same name in results.
-  first_attr <- function(layer) {
-    setdiff(names(layer), attr(layer, "sf_column"))[1]
+  # Best guess at the column that identifies a district within a prepared layer,
+  # used to color points and count members on the map. Columns are name-prefixed
+  # (e.g. "Congressional_DISTRICT"), so match against the BARE name (prefix
+  # stripped) and prefer district-like fields over incidental leading columns
+  # such as OBJECTID or Shape_Area -- picking the first column blindly would
+  # color a real TIGER file by its state FIPS code. Returns NA for a layer with
+  # no attribute columns (the map then falls back to a plain style).
+  layer_id_column <- function(layer, layer_name = NULL) {
+    cols <- setdiff(names(layer), attr(layer, "sf_column"))
+    if (length(cols) == 0) return(NA_character_)
+    bare <- cols
+    if (!is.null(layer_name) && nzchar(layer_name)) {
+      bare <- sub(paste0("^", sanitize_layer_name(layer_name), "_"), "", cols)
+    }
+    patterns <- c("^district$", "^dist$", "namelsad", "^cd[0-9]*$", "^sldu",
+                  "^sldl", "ward", "precinct", "division", "^name$", "geoid", "name")
+    for (p in patterns) {
+      hit <- which(grepl(p, bare, ignore.case = TRUE))
+      if (length(hit) > 0) return(cols[hit[1]])
+    }
+    cols[1]
+  }
+
+  # Resolve the district-id column for the currently selected map layer: the
+  # user's explicit "using column" pick when it is valid for that layer,
+  # otherwise the heuristic default.
+  selected_id_column <- function(layers, layer_name, chosen) {
+    layer <- layers[[layer_name]]
+    if (!is.null(chosen) && length(chosen) == 1 && nzchar(chosen) &&
+        chosen %in% names(layer)) {
+      return(chosen)
+    }
+    layer_id_column(layer, layer_name)
   }
 
   # Accumulated district files. A single fileInput only keeps the most recent
@@ -535,6 +564,10 @@ app_server <- function(input, output, session) {
   output$results <- DT::renderDT({
     shiny::req(results())
     result_data <- results()
+    # When removeGEO = FALSE the result is an sf object; its geometry column is
+    # "sticky" and survives `[` column selection, so drop it first or it would
+    # render (and later export) as a stringified list-column.
+    if (inherits(result_data, "sf")) result_data <- sf::st_drop_geometry(result_data)
 
     if (is.data.frame(result_data) && nrow(result_data) > 0) {
       result_data <- result_data[, exportable_columns(result_data), drop = FALSE]
@@ -598,6 +631,11 @@ app_server <- function(input, output, session) {
     shiny::tagList(
       shiny::selectInput("mapLayer", "Color points by district layer:",
                          choices = names(assignedLayers())),
+      # Which attribute column of the selected layer identifies a district. The
+      # choices (and a heuristic default) are filled server-side whenever the
+      # selected layer changes, so the user can override a bad guess -- e.g. a
+      # file whose first column is OBJECTID rather than the district name.
+      shiny::selectInput("mapIdCol", "using column:", choices = NULL),
       # Sized against the viewport (not a fixed pixel height) and marked
       # flex-shrink: 0 so the fillable card can't squeeze the map to make room
       # for the counts table below -- the panel scrolls to the table instead.
@@ -610,6 +648,19 @@ app_server <- function(input, output, session) {
     )
   })
 
+  # Fill the "using column" picker for whichever layer is selected, defaulting
+  # to the heuristic guess. Fires on the initial layer selection too, so the
+  # picker is populated before the map first draws.
+  shiny::observeEvent(input$mapLayer, {
+    layers <- assignedLayers()
+    shiny::req(layers, input$mapLayer %in% names(layers))
+    layer <- layers[[input$mapLayer]]
+    cols <- setdiff(names(layer), attr(layer, "sf_column"))
+    default <- layer_id_column(layer, input$mapLayer)
+    shiny::updateSelectInput(session, "mapIdCol", choices = cols,
+                             selected = if (!is.na(default)) default else character(0))
+  })
+
   # Registered only when leaflet is installed; without it the map tab shows
   # the install hint from mapUI instead.
   if (requireNamespace("leaflet", quietly = TRUE)) output$map <- leaflet::renderLeaflet({
@@ -619,14 +670,20 @@ app_server <- function(input, output, session) {
     res <- results()
     if (inherits(res, "sf")) res <- sf::st_drop_geometry(res)
 
+    # District-id column for the selected layer: the user's "using column" pick
+    # when valid, else the heuristic. Used for point coloring, its polygon
+    # labels, and the counts table (which resolves it the same way).
+    sel_col <- selected_id_column(layers, input$mapLayer, input$mapIdCol)
+
     m <- leaflet::leaflet() |> leaflet::addTiles()
 
     # All layers' polygons, one toggleable group per layer, labeled with the
     # per-district member count (computed from the same results the table
-    # shows, so the numbers can never disagree).
+    # shows, so the numbers can never disagree). The selected layer follows the
+    # "using column" pick; the rest use their heuristic id column.
     for (nm in names(layers)) {
       l4326 <- sf::st_transform(layers[[nm]], 4326)
-      col <- first_attr(l4326)
+      col <- if (identical(nm, input$mapLayer)) sel_col else layer_id_column(l4326, nm)
       label <- if (!is.na(col) && col %in% names(res)) {
         counts <- table(res[[col]])
         v <- as.character(l4326[[col]])
@@ -644,7 +701,6 @@ app_server <- function(input, output, session) {
     # fall outside every district plot gray.
     pts <- res[!is.na(res$geo_x) & !is.na(res$geo_y), , drop = FALSE]
     if (nrow(pts) > 0) {
-      sel_col <- first_attr(layers[[input$mapLayer]])
       addr <- htmltools::htmlEscape(paste0(pts$Street.Address, ", ", pts$City))
       if (!is.na(sel_col) && sel_col %in% names(pts)) {
         vals <- as.character(pts[[sel_col]])
@@ -691,7 +747,9 @@ app_server <- function(input, output, session) {
     shiny::req(results(), assignedLayers(), input$mapLayer)
     layers <- assignedLayers()
     shiny::req(input$mapLayer %in% names(layers))
-    col <- first_attr(layers[[input$mapLayer]])
+    # Same column the map colors by (user pick or heuristic); input$mapIdCol is
+    # referenced so the table refreshes when the "using column" pick changes.
+    col <- selected_id_column(layers, input$mapLayer, input$mapIdCol)
     res <- results()
     shiny::req(!is.na(col), col %in% names(res))
 
@@ -772,6 +830,9 @@ app_server <- function(input, output, session) {
     content = function(file) {
       shiny::req(results(), input$selectedColumns)
       data_to_write <- results()
+      # Drop the sticky sf geometry (removeGEO = FALSE) before selecting columns;
+      # otherwise write.csv emits a bogus "geometry" column of stringified points.
+      if (inherits(data_to_write, "sf")) data_to_write <- sf::st_drop_geometry(data_to_write)
 
       selected_cols <- intersect(input$selectedColumns, names(data_to_write))
       if (length(selected_cols) > 0) {
