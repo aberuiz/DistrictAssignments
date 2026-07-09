@@ -1,5 +1,35 @@
 # Changelog
 
+## DistrictAssignments 0.1.8
+
+Bug-fix release: clean output when geometry is kept, and a map that
+identifies districts correctly on real-world files.
+
+### Bug fixes
+
+- Downloading with “Remove Geometry Column” unchecked no longer writes a
+  bogus `geometry` column of stringified points (e.g. `c(-97, 30)`) to
+  the CSV, and the results table no longer renders it. The `sf` geometry
+  column is sticky under `[` selection, so it is now dropped before
+  columns are chosen for both the table and the download.
+- The results map no longer identifies districts by a layer’s first
+  attribute column, which on real district files (e.g. Census TIGER,
+  whose leading column is `STATEFP`/`OBJECTID`/`Shape_Area`) collapsed
+  every point to one color and tallied members by an irrelevant field.
+  It now picks a district-like column (`DISTRICT`, `NAMELSAD`, `CD`,
+  `SLDU`/`SLDL`, `WARD`, `PRECINCT`, `GEOID`, …) by name, and a new
+  “using column” dropdown lets you override the guess per selected layer
+  for point coloring and the member-count table.
+
+### Other
+
+- [`prepare_district_layers()`](https://aberuiz.github.io/DistrictAssignments/reference/prepare_district_layers.md)
+  no longer repairs geometry twice for file-path inputs
+  (`read_spatial_file()` already repairs on read); the extra
+  `st_make_valid()` pass now runs only on directly-supplied `sf` layers
+  that still need it.
+- `.DS_Store` is now git-ignored and untracked.
+
 ## DistrictAssignments 0.1.7
 
 App UI overhaul: the interface now stays usable with many district

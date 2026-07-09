@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.7</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.8</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,22 @@
       <small>Source: <a href="https://github.com/aberuiz/DistrictAssignments/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.1.8" id="districtassignments-018">DistrictAssignments 0.1.8<a class="anchor" aria-label="anchor" href="#districtassignments-018"></a></h2>
+<p>Bug-fix release: clean output when geometry is kept, and a map that identifies districts correctly on real-world files.</p>
+<div class="section level3">
+<h3 id="bug-fixes-0-1-8">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-1-8"></a></h3>
+<ul><li>Downloading with “Remove Geometry Column” unchecked no longer writes a bogus <code>geometry</code> column of stringified points (e.g. <code>c(-97, 30)</code>) to the CSV, and the results table no longer renders it. The <code>sf</code> geometry column is sticky under <code>[</code> selection, so it is now dropped before columns are chosen for both the table and the download.</li>
+<li>The results map no longer identifies districts by a layer’s first attribute column, which on real district files (e.g. Census TIGER, whose leading column is <code>STATEFP</code>/<code>OBJECTID</code>/<code>Shape_Area</code>) collapsed every point to one color and tallied members by an irrelevant field. It now picks a district-like column (<code>DISTRICT</code>, <code>NAMELSAD</code>, <code>CD</code>, <code>SLDU</code>/<code>SLDL</code>, <code>WARD</code>, <code>PRECINCT</code>, <code>GEOID</code>, …) by name, and a new “using column” dropdown lets you override the guess per selected layer for point coloring and the member-count table.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="other-0-1-8">Other<a class="anchor" aria-label="anchor" href="#other-0-1-8"></a></h3>
+<ul><li>
+<code><a href="../reference/prepare_district_layers.html">prepare_district_layers()</a></code> no longer repairs geometry twice for file-path inputs (<code>read_spatial_file()</code> already repairs on read); the extra <code>st_make_valid()</code> pass now runs only on directly-supplied <code>sf</code> layers that still need it.</li>
+<li>
+<code>.DS_Store</code> is now git-ignored and untracked.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.7" id="districtassignments-017">DistrictAssignments 0.1.7<a class="anchor" aria-label="anchor" href="#districtassignments-017"></a></h2>
 <p>App UI overhaul: the interface now stays usable with many district files, many columns, and long district lists.</p>
@@ -105,7 +121,7 @@
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer></div>
