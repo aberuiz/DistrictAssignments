@@ -1,16 +1,26 @@
 # DistrictAssignments 0.1.9
 
+Bug-fix and internal-cleanup release addressing a batch of review findings:
+the district-guessing heuristic, the map's "using column" picker, and the
+geometry-removal download all now work correctly, with the supporting
+internals consolidated and unit-tested.
+
+## Bug fixes
+
 * District-column guessing now recognizes TIGER congressional codes
   (`CD118FP`-style); previously such files could fall back to OBJECTID.
-* The guessing heuristic moved to the package internals and is covered by
-  unit tests.
 * The map's "using column" picker no longer goes blank after re-running
   Assign Districts, and switching layers no longer redraws the map twice.
 * "Remove Geometry Column" works again: unchecking it now adds a
   `geometry_wkt` column (WKT text) to the CSV download. The results table
   never displays it and now says so.
-* Internal: results are flattened to a plain data frame once at the source
-  instead of every consumer dropping `sf` geometry itself.
+
+## Other
+
+* The district-guessing heuristic moved to the package internals and is now
+  covered by unit tests.
+* Results are flattened to a plain data frame once at the source instead of
+  every consumer dropping `sf` geometry itself.
 * District layers are now geometry-repaired exactly once, on every input path
   — 0.1.8 removed the double repair only for file-path inputs, so app uploads
   still paid it.
