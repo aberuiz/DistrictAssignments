@@ -14,6 +14,8 @@
 * District layers are now geometry-repaired exactly once, on every input path
   — 0.1.8 removed the double repair only for file-path inputs, so app uploads
   still paid it.
+* The results map no longer reprojects every district layer on each redraw;
+  layers are transformed once per Assign run.
 
 # DistrictAssignments 0.1.8
 

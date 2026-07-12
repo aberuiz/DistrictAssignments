@@ -140,6 +140,22 @@ app_server <- function(input, output, session) {
   # different run than the points.
   assignedLayers <- shiny::reactiveVal(NULL)
 
+  # Map-ready copies of the assigned layers: WGS84 for leaflet, plus each
+  # layer's heuristic district column. Both are pure functions of
+  # assignedLayers(), so compute them once per Assign run instead of once
+  # per map render (reprojecting every polygon per render was the map's
+  # dominant cost).
+  assignedLayers4326 <- shiny::reactive({
+    shiny::req(assignedLayers())
+    lapply(assignedLayers(), sf::st_transform, 4326)
+  })
+  defaultIdColumns <- shiny::reactive({
+    layers <- shiny::req(assignedLayers())
+    vapply(names(layers),
+           function(nm) layer_id_column(layers[[nm]], nm),
+           character(1))
+  })
+
   # Resolve the district-id column for the currently selected map layer: the
   # user's explicit "using column" pick when it is valid for that layer,
   # otherwise the heuristic default.
@@ -669,7 +685,7 @@ app_server <- function(input, output, session) {
     shiny::req(layers, input$mapLayer %in% names(layers))
     layer <- layers[[input$mapLayer]]
     cols <- layer_attr_columns(layer)
-    default <- layer_id_column(layer, input$mapLayer)
+    default <- defaultIdColumns()[[input$mapLayer]]
     shiny::freezeReactiveValue(input, "mapIdCol")
     shiny::updateSelectInput(session, "mapIdCol", choices = cols,
                              selected = if (!is.na(default)) default else character(0))
@@ -679,13 +695,15 @@ app_server <- function(input, output, session) {
   # the install hint from mapUI instead.
   if (requireNamespace("leaflet", quietly = TRUE)) output$map <- leaflet::renderLeaflet({
     shiny::req(results(), assignedLayers(), input$mapLayer)
-    layers <- assignedLayers()
+    layers <- assignedLayers4326()
     shiny::req(input$mapLayer %in% names(layers))
     res <- results()
+    defaults <- defaultIdColumns()
 
     # District-id column for the selected layer: the user's "using column" pick
     # when valid, else the heuristic. Used for point coloring, its polygon
-    # labels, and the counts table (which resolves it the same way).
+    # labels, and the counts table (which resolves it the same way). st_transform
+    # leaves column names untouched, so resolving against the WGS84 copy is fine.
     sel_col <- selected_id_column(layers, input$mapLayer, input$mapIdCol)
 
     m <- leaflet::leaflet() |> leaflet::addTiles()
@@ -695,8 +713,8 @@ app_server <- function(input, output, session) {
     # shows, so the numbers can never disagree). The selected layer follows the
     # "using column" pick; the rest use their heuristic id column.
     for (nm in names(layers)) {
-      l4326 <- sf::st_transform(layers[[nm]], 4326)
-      col <- if (identical(nm, input$mapLayer)) sel_col else layer_id_column(l4326, nm)
+      l4326 <- layers[[nm]]
+      col <- if (identical(nm, input$mapLayer)) sel_col else defaults[[nm]]
       label <- if (!is.na(col) && col %in% names(res)) {
         counts <- table(res[[col]])
         v <- as.character(l4326[[col]])
