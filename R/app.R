@@ -83,7 +83,8 @@ app_ui <- function() {
         ),
         bslib::accordion_panel(
           "Options",
-          shiny::checkboxInput("removeGEO", "Remove Geometry Column", value = TRUE),
+          shiny::checkboxInput("removeGEO", "Remove geometry column from download", value = TRUE),
+          shiny::helpText("Unchecked: the download includes a geometry_wkt column (WKT text). The table never shows it."),
           shiny::checkboxInput("restrictGeo", "Restrict geocoding to district area", value = FALSE),
           shiny::checkboxInput("censusFallback",
                                "Retry failed geocodes with the US Census geocoder", value = TRUE),
@@ -114,6 +115,19 @@ app_ui <- function() {
       bslib::nav_panel("Map", shiny::uiOutput("mapUI"))
     )
   )
+}
+
+# Flatten an sf result to a plain data.frame, preserving the kept geometry as a
+# "geometry_wkt" text column (WKT). results() must never hold an sf object: sf's
+# sticky geometry survives `[` selection and every downstream consumer (table,
+# map, CSV) would have to remember to drop it -- two of them already forgot once
+# (v0.1.8).
+flatten_result_geometry <- function(result) {
+  if (!inherits(result, "sf")) return(result)
+  wkt <- sf::st_as_text(sf::st_geometry(result))
+  result <- sf::st_drop_geometry(result)
+  result$geometry_wkt <- wkt
+  result
 }
 
 app_server <- function(input, output, session) {
@@ -475,7 +489,7 @@ app_server <- function(input, output, session) {
 
       progress$set(message = "Complete!", value = 1)
 
-      results(result)
+      results(flatten_result_geometry(result))
       assignedLayers(layers)
 
       # Show the summary statistics in a modal: a notification renders its
@@ -541,13 +555,14 @@ app_server <- function(input, output, session) {
   output$results <- DT::renderDT({
     shiny::req(results())
     result_data <- results()
-    # When removeGEO = FALSE the result is an sf object; its geometry column is
-    # "sticky" and survives `[` column selection, so drop it first or it would
-    # render (and later export) as a stringified list-column.
-    if (inherits(result_data, "sf")) result_data <- sf::st_drop_geometry(result_data)
+    # WKT polygons/points are unreadable noise in a table; when removeGEO = FALSE
+    # left a geometry_wkt column it stays out of the display (but rides along in
+    # the download). Note where it went so the user isn't surprised it's missing.
+    has_wkt <- "geometry_wkt" %in% names(result_data)
 
     if (is.data.frame(result_data) && nrow(result_data) > 0) {
-      result_data <- result_data[, exportable_columns(result_data), drop = FALSE]
+      display_cols <- setdiff(exportable_columns(result_data), "geometry_wkt")
+      result_data <- result_data[, display_cols, drop = FALSE]
 
       # Built for wide results: a "Show/hide columns" button (colvis) tames
       # many district layers' worth of columns, per-column filters help find
@@ -558,6 +573,9 @@ app_server <- function(input, output, session) {
         filter = "top",
         extensions = "Buttons",
         plugins = "ellipsis",
+        caption = if (has_wkt) {
+          "geometry_wkt column not shown here; it is available in the download."
+        },
         options = list(
           scrollX = TRUE,
           pageLength = 25,
@@ -664,7 +682,6 @@ app_server <- function(input, output, session) {
     layers <- assignedLayers()
     shiny::req(input$mapLayer %in% names(layers))
     res <- results()
-    if (inherits(res, "sf")) res <- sf::st_drop_geometry(res)
 
     # District-id column for the selected layer: the user's "using column" pick
     # when valid, else the heuristic. Used for point coloring, its polygon
@@ -826,10 +843,6 @@ app_server <- function(input, output, session) {
     content = function(file) {
       shiny::req(results(), input$selectedColumns)
       data_to_write <- results()
-      # Drop the sticky sf geometry (removeGEO = FALSE) before selecting columns;
-      # otherwise write.csv emits a bogus "geometry" column of stringified points.
-      if (inherits(data_to_write, "sf")) data_to_write <- sf::st_drop_geometry(data_to_write)
-
       selected_cols <- intersect(input$selectedColumns, names(data_to_write))
       if (length(selected_cols) > 0) {
         data_to_write <- data_to_write[, selected_cols, drop = FALSE]

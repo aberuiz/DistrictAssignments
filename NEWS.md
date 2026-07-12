@@ -6,6 +6,11 @@
   unit tests.
 * The map's "using column" picker no longer goes blank after re-running
   Assign Districts, and switching layers no longer redraws the map twice.
+* "Remove Geometry Column" works again: unchecking it now adds a
+  `geometry_wkt` column (WKT text) to the CSV download. The results table
+  never displays it and now says so.
+* Internal: results are flattened to a plain data frame once at the source
+  instead of every consumer dropping `sf` geometry itself.
 
 # DistrictAssignments 0.1.8
 
