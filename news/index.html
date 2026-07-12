@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DistrictAssignments</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.8</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.9</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,23 @@
       <small>Source: <a href="https://github.com/aberuiz/DistrictAssignments/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.1.9" id="districtassignments-019">DistrictAssignments 0.1.9<a class="anchor" aria-label="anchor" href="#districtassignments-019"></a></h2>
+<p>Bug-fix and internal-cleanup release addressing a batch of review findings: the district-guessing heuristic, the map’s “using column” picker, and the geometry-removal download all now work correctly, with the supporting internals consolidated and unit-tested.</p>
+<div class="section level3">
+<h3 id="bug-fixes-0-1-9">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-1-9"></a></h3>
+<ul><li>District-column guessing now recognizes TIGER congressional codes (<code>CD118FP</code>-style); previously such files could fall back to OBJECTID.</li>
+<li>The map’s “using column” picker no longer goes blank after re-running Assign Districts, and switching layers no longer redraws the map twice.</li>
+<li>“Remove Geometry Column” works again: unchecking it now adds a <code>geometry_wkt</code> column (WKT text) to the CSV download. The results table never displays it and now says so.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="other-0-1-9">Other<a class="anchor" aria-label="anchor" href="#other-0-1-9"></a></h3>
+<ul><li>The district-guessing heuristic moved to the package internals and is now covered by unit tests.</li>
+<li>Results are flattened to a plain data frame once at the source instead of every consumer dropping <code>sf</code> geometry itself.</li>
+<li>District layers are now geometry-repaired exactly once, on every input path — 0.1.8 removed the double repair only for file-path inputs, so app uploads still paid it.</li>
+<li>The results map no longer reprojects every district layer on each redraw; layers are transformed once per Assign run.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.8" id="districtassignments-018">DistrictAssignments 0.1.8<a class="anchor" aria-label="anchor" href="#districtassignments-018"></a></h2>
 <p>Bug-fix release: clean output when geometry is kept, and a map that identifies districts correctly on real-world files.</p>
