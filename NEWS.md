@@ -4,6 +4,8 @@
   (`CD118FP`-style); previously such files could fall back to OBJECTID.
 * The guessing heuristic moved to the package internals and is covered by
   unit tests.
+* The map's "using column" picker no longer goes blank after re-running
+  Assign Districts, and switching layers no longer redraws the map twice.
 
 # DistrictAssignments 0.1.8
 

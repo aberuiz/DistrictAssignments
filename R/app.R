@@ -605,14 +605,30 @@ app_server <- function(input, output, session) {
     if (is.null(results()) || is.null(assignedLayers())) {
       return(shiny::helpText("Run Assign Districts to see the results on a map."))
     }
+    # Build both selects fully populated from the current layers rather than
+    # creating mapIdCol empty and filling it from an observer: a single-layer
+    # re-run re-renders this UI but re-sends the same mapLayer value, which
+    # Shiny dedupes, so the observer never fires and the picker stays blank.
+    # Deriving choices here means every Assign re-run gets a correct picker.
+    # The freezes stop the map from rendering against these inputs before the
+    # client round-trips their new values. (A re-run resets the picker to the
+    # heuristic default -- a fresh result set is a fresh map.)
+    layers <- assignedLayers()
+    first_layer <- names(layers)[1]
+    shiny::freezeReactiveValue(input, "mapLayer")
+    shiny::freezeReactiveValue(input, "mapIdCol")
+    first_default <- layer_id_column(layers[[first_layer]], first_layer)
     shiny::tagList(
       shiny::selectInput("mapLayer", "Color points by district layer:",
-                         choices = names(assignedLayers())),
+                         choices = names(layers)),
       # Which attribute column of the selected layer identifies a district. The
-      # choices (and a heuristic default) are filled server-side whenever the
-      # selected layer changes, so the user can override a bad guess -- e.g. a
-      # file whose first column is OBJECTID rather than the district name.
-      shiny::selectInput("mapIdCol", "using column:", choices = NULL),
+      # choices (and a heuristic default) are computed here for the first layer
+      # and refreshed by the mapLayer observer on later layer switches, so the
+      # user can override a bad guess -- e.g. a file whose first column is
+      # OBJECTID rather than the district name.
+      shiny::selectInput("mapIdCol", "using column:",
+                         choices = layer_attr_columns(layers[[first_layer]]),
+                         selected = if (!is.na(first_default)) first_default else character(0)),
       # Sized against the viewport (not a fixed pixel height) and marked
       # flex-shrink: 0 so the fillable card can't squeeze the map to make room
       # for the counts table below -- the panel scrolls to the table instead.
@@ -625,15 +641,18 @@ app_server <- function(input, output, session) {
     )
   })
 
-  # Fill the "using column" picker for whichever layer is selected, defaulting
-  # to the heuristic guess. Fires on the initial layer selection too, so the
-  # picker is populated before the map first draws.
+  # Refill the "using column" picker when the user switches layers. mapUI owns
+  # the initial state (first layer's choices + default); this observer only
+  # handles switches to a different layer. Freezing mapIdCol first stops
+  # renderLeaflet from firing once with the previous layer's stale column
+  # before the new value round-trips from the client.
   shiny::observeEvent(input$mapLayer, {
     layers <- assignedLayers()
     shiny::req(layers, input$mapLayer %in% names(layers))
     layer <- layers[[input$mapLayer]]
     cols <- layer_attr_columns(layer)
     default <- layer_id_column(layer, input$mapLayer)
+    shiny::freezeReactiveValue(input, "mapIdCol")
     shiny::updateSelectInput(session, "mapIdCol", choices = cols,
                              selected = if (!is.na(default)) default else character(0))
   })
