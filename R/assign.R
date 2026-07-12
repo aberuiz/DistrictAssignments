@@ -84,9 +84,7 @@ AssignToDistricts <- function(geocoded, layers, removeGEO = TRUE,
   # BOTH sides to ".x"/".y", leaving the fresh assignment under an unexpected
   # name; instead rename the stale input copy to "<name>_input" so every
   # fresh assignment lands under its documented column name.
-  layer_attr_cols <- unlist(lapply(layers, function(l) {
-    setdiff(names(l), attr(l, "sf_column"))
-  }))
+  layer_attr_cols <- unlist(lapply(layers, layer_attr_columns))
   clash <- setdiff(intersect(names(geocoded), layer_attr_cols), required_cols)
   if (length(clash) > 0) {
     renamed <- paste0(clash, "_input")

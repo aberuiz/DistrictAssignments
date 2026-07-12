@@ -1,3 +1,10 @@
+# DistrictAssignments 0.1.9
+
+* District-column guessing now recognizes TIGER congressional codes
+  (`CD118FP`-style); previously such files could fall back to OBJECTID.
+* The guessing heuristic moved to the package internals and is covered by
+  unit tests.
+
 # DistrictAssignments 0.1.8
 
 Bug-fix release: clean output when geometry is kept, and a map that

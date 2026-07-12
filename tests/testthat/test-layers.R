@@ -156,6 +156,61 @@ test_that("names that sanitize to nothing fall back to a positional prefix", {
   expect_true("District_1_DISTRICT" %in% names(out[[1]]))
 })
 
+test_that("layer_id_column recognizes trimmed TIGER congressional codes", {
+  # A CD shapefile stripped to a few columns: no NAMELSAD/GEOID/NAME to catch,
+  # so the CD code must win over the leading OBJECTID (the F3 regression).
+  cd <- sf::st_sf(
+    OBJECTID = 1:2, CD118FP = c("01", "02"), ALAND = c(1, 2), AWATER = c(0, 0),
+    geometry = sf::st_sfc(mk_poly(-98, 30, -97.5, 30.3),
+                          mk_poly(-98, 30.3, -97.5, 30.6), crs = 4326)
+  )
+  expect_equal(layer_id_column(cd), "CD118FP")
+})
+
+test_that("layer_id_column follows its priority order and edge cases", {
+  # NAMELSAD outranks the CD code in a full TIGER-ish layer.
+  full <- sf::st_sf(
+    STATEFP = "48", CD118FP = "01", GEOID = "4801", NAMELSAD = "District 1",
+    geometry = sf::st_sfc(mk_poly(-98, 30, -97.5, 30.6), crs = 4326)
+  )
+  expect_equal(layer_id_column(full), "NAMELSAD")
+
+  # A ward column is picked out of unrelated leading columns.
+  ward <- sf::st_sf(
+    OBJECTID = 1, WARDID = "3",
+    geometry = sf::st_sfc(mk_poly(-98, 30, -97.5, 30.6), crs = 4326)
+  )
+  expect_equal(layer_id_column(ward), "WARDID")
+
+  # No attribute columns -> NA (map falls back to a plain style).
+  geom_only <- sf::st_sf(
+    geometry = sf::st_sfc(mk_poly(-98, 30, -97.5, 30.6), crs = 4326)
+  )
+  expect_true(is.na(layer_id_column(geom_only)))
+
+  # Nothing recognized -> the first attribute column.
+  unknown <- sf::st_sf(
+    FOO = 1, BAR = 2,
+    geometry = sf::st_sfc(mk_poly(-98, 30, -97.5, 30.6), crs = 4326)
+  )
+  expect_equal(layer_id_column(unknown), "FOO")
+})
+
+test_that("layer_id_column strips the layer-name prefix that prepare_district_layers adds", {
+  # Two layers sharing a name force the make.unique dedupe branch, so the second
+  # layer's prefix is "Council_1" rather than "Council". For each element, the
+  # heuristic must still find a prefixed column that exists in the layer --
+  # proving sanitize_layer_name(list name) still equals the real column prefix.
+  out <- suppressMessages(prepare_district_layers(
+    list(Council = fixture_layer_ns(), Council = fixture_layer_overlap())
+  ))
+  for (nm in names(out)) {
+    col <- layer_id_column(out[[nm]], nm)
+    expect_true(startsWith(col, paste0(nm, "_")))
+    expect_true(col %in% names(out[[nm]]))
+  }
+})
+
 test_that("empty and non-polygon layers are caught", {
   expect_error(
     prepare_district_layers(list(Empty = fixture_layer_ns()[0, ])),

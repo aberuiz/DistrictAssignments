@@ -126,29 +126,6 @@ app_server <- function(input, output, session) {
   # different run than the points.
   assignedLayers <- shiny::reactiveVal(NULL)
 
-  # Best guess at the column that identifies a district within a prepared layer,
-  # used to color points and count members on the map. Columns are name-prefixed
-  # (e.g. "Congressional_DISTRICT"), so match against the BARE name (prefix
-  # stripped) and prefer district-like fields over incidental leading columns
-  # such as OBJECTID or Shape_Area -- picking the first column blindly would
-  # color a real TIGER file by its state FIPS code. Returns NA for a layer with
-  # no attribute columns (the map then falls back to a plain style).
-  layer_id_column <- function(layer, layer_name = NULL) {
-    cols <- setdiff(names(layer), attr(layer, "sf_column"))
-    if (length(cols) == 0) return(NA_character_)
-    bare <- cols
-    if (!is.null(layer_name) && nzchar(layer_name)) {
-      bare <- sub(paste0("^", sanitize_layer_name(layer_name), "_"), "", cols)
-    }
-    patterns <- c("^district$", "^dist$", "namelsad", "^cd[0-9]*$", "^sldu",
-                  "^sldl", "ward", "precinct", "division", "^name$", "geoid", "name")
-    for (p in patterns) {
-      hit <- which(grepl(p, bare, ignore.case = TRUE))
-      if (length(hit) > 0) return(cols[hit[1]])
-    }
-    cols[1]
-  }
-
   # Resolve the district-id column for the currently selected map layer: the
   # user's explicit "using column" pick when it is valid for that layer,
   # otherwise the heuristic default.
@@ -655,7 +632,7 @@ app_server <- function(input, output, session) {
     layers <- assignedLayers()
     shiny::req(layers, input$mapLayer %in% names(layers))
     layer <- layers[[input$mapLayer]]
-    cols <- setdiff(names(layer), attr(layer, "sf_column"))
+    cols <- layer_attr_columns(layer)
     default <- layer_id_column(layer, input$mapLayer)
     shiny::updateSelectInput(session, "mapIdCol", choices = cols,
                              selected = if (!is.na(default)) default else character(0))

@@ -8,6 +8,13 @@ sanitize_layer_name <- function(name) {
   gsub("^_+|_+$", "", name)
 }
 
+# A layer's attribute (non-geometry) column names. The map dropdown's choices
+# and the district-column heuristic's candidates both derive from this, so the
+# "attribute columns = names minus the sf_column" convention lives in one place.
+layer_attr_columns <- function(layer) {
+  setdiff(names(layer), attr(layer, "sf_column"))
+}
+
 # Prefix a district layer's attribute (non-geometry) columns with its layer name
 # so columns from multiple layers stay distinct and self-describing. A "DISTRICT"
 # column in the "Congressional" layer becomes "Congressional_DISTRICT". The
@@ -16,13 +23,41 @@ prefix_layer_columns <- function(layer, layer_name) {
   layer_name <- sanitize_layer_name(layer_name)
   if (nchar(layer_name) == 0) return(layer)
 
-  geom_col <- attr(layer, "sf_column")
-  data_cols <- setdiff(names(layer), geom_col)
+  data_cols <- layer_attr_columns(layer)
   if (length(data_cols) > 0) {
     idx <- match(data_cols, names(layer))
     names(layer)[idx] <- paste0(layer_name, "_", data_cols)
   }
   layer
+}
+
+# Best guess at the column that identifies a district within a prepared layer,
+# used to color points and count members on the map. Columns are name-prefixed
+# (e.g. "Congressional_DISTRICT"), so match against the BARE name (prefix
+# stripped) and prefer district-like fields over incidental leading columns
+# such as OBJECTID or Shape_Area -- picking the first column blindly would
+# color a real TIGER file by its state FIPS code. Returns NA for a layer with
+# no attribute columns (the map then falls back to a plain style).
+layer_id_column <- function(layer, layer_name = NULL) {
+  cols <- layer_attr_columns(layer)
+  if (length(cols) == 0) return(NA_character_)
+  bare <- cols
+  if (!is.null(layer_name) && nzchar(layer_name)) {
+    # The strip assumes sanitize_layer_name(list name) == the column prefix, an
+    # invariant established by prepare_district_layers and locked by
+    # test-layers.R's prefixed round-trip test.
+    bare <- sub(paste0("^", sanitize_layer_name(layer_name), "_"), "", cols)
+  }
+  # "^cd[0-9]" matches TIGER congressional codes (CD118FP, CD116FP); the trailing
+  # FP suffix means an anchored "^cd[0-9]*$" never would. It also matches oddballs
+  # like CD2020POP, which is fine -- any CD...-prefixed column beats OBJECTID.
+  patterns <- c("^district$", "^dist$", "namelsad", "^cd[0-9]", "^sldu",
+                "^sldl", "ward", "precinct", "division", "^name$", "geoid", "name")
+  for (p in patterns) {
+    hit <- which(grepl(p, bare, ignore.case = TRUE))
+    if (length(hit) > 0) return(cols[hit[1]])
+  }
+  cols[1]
 }
 
 # Determine a display name for each district layer, used to prefix its columns.
