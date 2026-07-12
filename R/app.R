@@ -46,6 +46,9 @@ app_ui <- function() {
   bslib::page_sidebar(
     title = "Assign Districts",
     theme = bslib::bs_theme(version = 5, bootswatch = "minty"),
+    # Spinners on recalculating outputs (and a pulse while the server is
+    # busy), so a slow table or map render never looks like a frozen app.
+    shiny::useBusyIndicators(),
     sidebar = bslib::sidebar(
       width = 360,
       bslib::accordion(
@@ -145,9 +148,23 @@ app_server <- function(input, output, session) {
   # assignedLayers(), so compute them once per Assign run instead of once
   # per map render (reprojecting every polygon per render was the map's
   # dominant cost).
+  #
+  # The map copies are also simplified (display only -- assignment always uses
+  # the full-detail layers): dense boundary files are the bulk of what gets
+  # serialized to the browser on every map render, and at overview zoom a
+  # ~25 m tolerance is invisible. dTolerance is in meters because s2 handles
+  # geographic coordinates. If simplifying would drop any district outright
+  # (or errors), that layer keeps its full geometry -- a slower map beats a
+  # missing polygon.
   assignedLayers4326 <- shiny::reactive({
     shiny::req(assignedLayers())
-    lapply(assignedLayers(), sf::st_transform, 4326)
+    lapply(assignedLayers(), function(layer) {
+      l4326 <- sf::st_transform(layer, 4326)
+      simplified <- tryCatch(sf::st_simplify(l4326, dTolerance = 25),
+                             error = function(e) NULL)
+      if (is.null(simplified) || any(sf::st_is_empty(simplified))) l4326
+      else simplified
+    })
   })
   defaultIdColumns <- shiny::reactive({
     layers <- shiny::req(assignedLayers())
@@ -691,6 +708,16 @@ app_server <- function(input, output, session) {
                              selected = if (!is.na(default)) default else character(0))
   })
 
+  # The map tab starts hidden, and Shiny suspends hidden outputs -- by default
+  # nothing map-related would compute until the user first opens the tab,
+  # which is exactly when they'd sit through the whole build. Rendering
+  # eagerly moves the server-side work (widget build + payload transfer) to
+  # right after the Assign run, while the user is still reading the table.
+  # This is safe with leaflet: its JS binding stashes the payload for hidden
+  # containers (pendingRenderData) and draws on first show, so the map can't
+  # initialize at zero size.
+  shiny::outputOptions(output, "mapUI", suspendWhenHidden = FALSE)
+
   # Registered only when leaflet is installed; without it the map tab shows
   # the install hint from mapUI instead.
   if (requireNamespace("leaflet", quietly = TRUE)) output$map <- leaflet::renderLeaflet({
@@ -706,7 +733,11 @@ app_server <- function(input, output, session) {
     # leaves column names untouched, so resolving against the WGS84 copy is fine.
     sel_col <- selected_id_column(layers, input$mapLayer, input$mapIdCol)
 
-    m <- leaflet::leaflet() |> leaflet::addTiles()
+    # preferCanvas draws the circle markers on a canvas instead of one SVG
+    # node per member; with thousands of points the SVG version is what made
+    # showing (and even re-showing) the map tab sluggish.
+    m <- leaflet::leaflet(options = leaflet::leafletOptions(preferCanvas = TRUE)) |>
+      leaflet::addTiles()
 
     # All layers' polygons, one toggleable group per layer, labeled with the
     # per-district member count (computed from the same results the table
@@ -761,6 +792,11 @@ app_server <- function(input, output, session) {
     }
     m
   })
+  # Same eager rendering as mapUI above (outputOptions errors on outputs that
+  # were never registered, hence the repeated guard).
+  if (requireNamespace("leaflet", quietly = TRUE)) {
+    shiny::outputOptions(output, "map", suspendWhenHidden = FALSE)
+  }
 
   output$mapCaption <- shiny::renderText({
     shiny::req(results())
