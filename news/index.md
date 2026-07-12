@@ -1,5 +1,16 @@
 # Changelog
 
+## DistrictAssignments (development version)
+
+- The results map is much faster to open and no longer looks frozen
+  while it builds: outputs show a busy spinner while recalculating
+  (`shiny (>= 1.9.0)` is now required for the app), the map renders in
+  the background right after an Assign run instead of on the first visit
+  to the Map tab, member points are drawn on a canvas rather than as one
+  SVG node each, and the display copies of the district polygons are
+  simplified (~25 m tolerance; assignment still uses the full-detail
+  geometry).
+
 ## DistrictAssignments 0.1.9
 
 Bug-fix and internal-cleanup release addressing a batch of review
