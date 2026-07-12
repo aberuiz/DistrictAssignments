@@ -95,8 +95,10 @@ repair_geometry <- function(layer) {
   sf::st_make_valid(layer)
 }
 
-# Read a single .shp, .geojson, or .gpkg file from a path and return a
-# validated, repaired sf layer.
+# Read a single .shp, .geojson, or .gpkg file from a path and return the raw
+# sf layer. Geometry repair is NOT done here -- prepare_district_layers()
+# repairs every layer once, so repairing on read would double the work for
+# path inputs.
 read_spatial_file <- function(file_path) {
   file_ext <- tolower(tools::file_ext(file_path))
 
@@ -115,10 +117,10 @@ read_spatial_file <- function(file_path) {
         if (is.na(old)) Sys.unsetenv("SHAPE_RESTORE_SHX")
         else Sys.setenv(SHAPE_RESTORE_SHX = old)
       )
-      repair_geometry(sf::read_sf(file_path))
+      sf::read_sf(file_path)
     },
     "geojson" = {
-      repair_geometry(yyjsonr::read_geojson_file(file_path))
+      yyjsonr::read_geojson_file(file_path)
     },
     "gpkg" = {
       # A GeoPackage can hold several layers; use the first and say so, the
@@ -131,7 +133,7 @@ read_spatial_file <- function(file_path) {
           paste(layer_names, collapse = ", "), layer_names[1]
         ))
       }
-      repair_geometry(sf::read_sf(file_path, layer = layer_names[1]))
+      sf::read_sf(file_path, layer = layer_names[1])
     },
     stop("Unsupported file format. Please provide a .shp, .geojson, or .gpkg file.")
   )
@@ -145,7 +147,8 @@ read_spatial_file <- function(file_path) {
 # DIFFERENT archive -- collapsing every upload onto one layer. Isolating each
 # archive guarantees the glob only sees the file(s) from the archive being read.
 #
-# Returns: an sf object with validated, repaired geometry.
+# Returns: the raw sf object read from the archive (geometry repair happens once
+# in prepare_district_layers, not here).
 unzip_and_read_spatial <- function(zipfile) {
   temp_dir <- tempfile("district_")
   dir.create(temp_dir)
@@ -215,13 +218,9 @@ prepare_district_layers <- function(districtsList, districtNames = NULL) {
   # fall back on (reading replaces paths with sf objects).
   layer_names <- resolve_layer_names(districtsList, districtNames)
 
-  # Read any file-path elements into sf layers. read_spatial_file() already
-  # repairs the geometry it reads, so track which elements were paths to avoid
-  # repairing them a second time below.
-  from_path <- vapply(districtsList,
-                      function(x) is.character(x) && length(x) == 1, logical(1))
+  # Read any file-path elements into sf layers.
   for (i in seq_along(districtsList)) {
-    if (from_path[i]) {
+    if (is.character(districtsList[[i]]) && length(districtsList[[i]]) == 1) {
       districtsList[[i]] <- read_spatial_file(districtsList[[i]])
     }
   }
@@ -274,10 +273,10 @@ prepare_district_layers <- function(districtsList, districtNames = NULL) {
     prefixes <- deduped
   }
 
-  # Ensure valid geometry (only for directly-supplied sf layers; path inputs
-  # were already repaired on read), then prefix each layer's columns with its
-  # name so columns from different layers stay distinct in the joined output.
-  districtsList[!from_path] <- lapply(districtsList[!from_path], repair_geometry)
+  # Ensure valid geometry (every layer, exactly once -- reads no longer repair),
+  # then prefix each layer's columns with its name so columns from different
+  # layers stay distinct in the joined output.
+  districtsList <- lapply(districtsList, repair_geometry)
   districtsList <- Map(prefix_layer_columns, districtsList, prefixes)
 
   # Name the list itself so downstream consumers (e.g. the app's map tab) can

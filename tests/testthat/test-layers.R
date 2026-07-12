@@ -47,6 +47,31 @@ test_that("prepare_district_layers accepts sf, named lists, and character vector
   expect_true(paste0(prefix, "_DISTRICT") %in% names(out[[1]]))
 })
 
+test_that("prepare_district_layers accepts a mixed paths + sf list", {
+  # A list holding both a file path and an in-memory sf layer exercises the
+  # read/prefix split for both element kinds in one call.
+  path <- tempfile(fileext = ".geojson")
+  sf::st_write(fixture_layer_ns(), path, quiet = TRUE)
+
+  out <- prepare_district_layers(list(FromPath = path, InMem = fixture_layer_overlap()))
+  expect_length(out, 2)
+  expect_true("FromPath_DISTRICT" %in% names(out[[1]]))
+  expect_true("InMem_ZONE" %in% names(out[[2]]))
+})
+
+test_that("prepare_district_layers repairs geometry on both input paths", {
+  # Passed a bowtie sf layer directly, geometry must come back valid.
+  out <- prepare_district_layers(list(Bad = fixture_layer_bowtie()))
+  expect_true(all(sf::st_is_valid(out[[1]])))
+
+  # Same layer written to disk and passed as a path: reads no longer repair, so
+  # this proves prepare_district_layers is the single repair point.
+  path <- tempfile(fileext = ".geojson")
+  sf::st_write(fixture_layer_bowtie(), path, quiet = TRUE)
+  out <- prepare_district_layers(path)
+  expect_true(all(sf::st_is_valid(out[[1]])))
+})
+
 test_that("prepare_district_layers returns a list named by layer", {
   out <- prepare_district_layers(
     list(fixture_layer_ns(), fixture_layer_overlap()),

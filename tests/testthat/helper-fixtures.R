@@ -32,6 +32,20 @@ fixture_layer_overlap <- function() {
   )
 }
 
+# A self-intersecting "bowtie" polygon -- the standard invalid geometry. The
+# ring crosses itself (0 0 -> 2 2 -> 2 0 -> 0 2 -> 0 0), so st_is_valid() is
+# FALSE until repaired. Offset near Austin so it carries a plausible CRS.
+fixture_layer_bowtie <- function() {
+  ring <- matrix(
+    c(-98, 30, -97.98, 30.02, -97.98, 30, -98, 30.02, -98, 30),
+    ncol = 2, byrow = TRUE
+  )
+  sf::st_sf(
+    DISTRICT = "Bowtie",
+    geometry = sf::st_sfc(sf::st_polygon(list(ring)), crs = 4326)
+  )
+}
+
 # A geocoded member table shaped like GeocodeMembers() output: two located
 # points (one in each NS district), one missing address, one failed geocode.
 fixture_geocoded <- function() {
